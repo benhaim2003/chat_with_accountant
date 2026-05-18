@@ -1,0 +1,2 @@
+# No external dependencies yet — project uses Python stdlib only.
+# Add packages here as needed (confirm with user before installing).

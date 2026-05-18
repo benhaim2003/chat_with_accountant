@@ -1,5 +1,6 @@
 import logging
 from data_manager import load_clients, load_received_docs, get_missing_documents
+from notifier import notify_all
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 
@@ -18,13 +19,7 @@ def main() -> None:
         logging.info("All clients have submitted their documents for %s.", CURRENT_MONTH)
         return
 
-    print(f"\n--- Missing Documents Report: {CURRENT_MONTH} ---")
-    for report in reports:
-        print(f"\nClient: {report['client_name']} ({report['client_id']})")
-        print(f"  Contact: {report['contact']['email']} | {report['contact']['phone']}")
-        print("  Missing:")
-        for doc in report["missing_documents"]:
-            print(f"    - {doc['label']}")
+    notify_all(reports, use_mock=True)
 
 
 if __name__ == "__main__":

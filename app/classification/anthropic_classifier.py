@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 VALID_DOCUMENT_TYPES: list[str] = [
     "electricity_bill",
+    "water_bill",
     "tax_invoice",
     "bank_statement",
     "salary_slip",
@@ -25,6 +26,7 @@ Read the text extracted from the document below and respond with ONLY one of \
 these labels — no explanation, no punctuation, just the label:
 
 electricity_bill
+water_bill
 tax_invoice
 bank_statement
 salary_slip

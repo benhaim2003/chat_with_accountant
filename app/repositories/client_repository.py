@@ -3,7 +3,7 @@ import json
 import logging
 
 from app.models.client import Client
-from app.models.document import ClientReceivedDocs, MissingDocumentReport
+from app.models.document import ClientReceivedDocs, MissingDocumentReport, ReceivedDocument
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +23,18 @@ class ClientRepository:
         ]
 
     def get_missing_documents(self, month: str) -> list[MissingDocumentReport]:
+        """JSON-based mode: loads received docs from the JSON file."""
         clients = self.load_clients()
         received_docs = self.load_received_docs()
+        return self.compute_missing(clients, received_docs, month)
 
+    def compute_missing(
+        self,
+        clients: list[Client],
+        received_docs: list[ClientReceivedDocs],
+        month: str,
+    ) -> list[MissingDocumentReport]:
+        """Pure comparison: accepts any source of received docs."""
         received_by_client: dict[str, set[str]] = {
             entry.client_id: {doc.type for doc in entry.received}
             for entry in received_docs

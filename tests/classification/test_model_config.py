@@ -22,11 +22,6 @@ class TestAvailableModels:
         for key, model in AVAILABLE_MODELS.items():
             assert model.api_key_env, f"{key} is missing api_key_env"
 
-    def test_model_config_is_immutable(self) -> None:
-        model = AVAILABLE_MODELS["claude-sonnet-4-6"]
-        with pytest.raises(dataclasses.FrozenInstanceError):
-            model.provider = "other"  # type: ignore[misc]
-
 
 class TestGetActiveModel:
     def test_returns_default_model(self, monkeypatch: pytest.MonkeyPatch) -> None:

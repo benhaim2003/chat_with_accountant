@@ -26,9 +26,10 @@ def _send_mock(phone: str, message: str) -> bool:
 def _send_whatsapp(phone: str, message: str) -> bool:
     # --- Plug Twilio in here when ready ---
     # from twilio.rest import Client
-    # client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    # import config
+    # client = Client(config.TWILIO_ACCOUNT_SID, config.TWILIO_AUTH_TOKEN)
     # client.messages.create(
-    #     from_="whatsapp:+14155238886",
+    #     from_=config.TWILIO_WHATSAPP_FROM,
     #     to=f"whatsapp:{phone}",
     #     body=message,
     # )

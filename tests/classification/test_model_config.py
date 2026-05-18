@@ -1,4 +1,3 @@
-import dataclasses
 import pytest
 
 import app.classification.model_config as mc

@@ -1,3 +1,4 @@
+import dataclasses
 import pytest
 from app.models.client import Client, Contact, ExpectedDocument
 
@@ -9,7 +10,7 @@ class TestContact:
         assert c.email == "info@levi.co.il"
 
     def test_frozen(self, contact: Contact) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(dataclasses.FrozenInstanceError):
             contact.phone = "new"  # type: ignore[misc]
 
 
@@ -22,7 +23,7 @@ class TestExpectedDocument:
 
     def test_frozen(self, expected_doc_dict: dict) -> None:
         doc = ExpectedDocument.from_dict(expected_doc_dict)
-        with pytest.raises(Exception):
+        with pytest.raises(dataclasses.FrozenInstanceError):
             doc.type = "other"  # type: ignore[misc]
 
 

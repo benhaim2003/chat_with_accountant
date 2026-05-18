@@ -1,3 +1,4 @@
+import dataclasses
 import pytest
 from unittest.mock import patch
 
@@ -27,7 +28,7 @@ class TestAvailableModels:
 
     def test_model_config_is_immutable(self) -> None:
         model = AVAILABLE_MODELS["claude-sonnet-4-6"]
-        with pytest.raises(Exception):
+        with pytest.raises(dataclasses.FrozenInstanceError):
             model.provider = "other"  # type: ignore[misc]
 
 

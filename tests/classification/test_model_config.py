@@ -1,12 +1,8 @@
 import dataclasses
 import pytest
-from unittest.mock import patch
 
-from app.classification.model_config import (
-    AVAILABLE_MODELS,
-    get_active_model,
-    ModelConfig,
-)
+import app.classification.model_config as mc
+from app.classification.model_config import AVAILABLE_MODELS, get_active_model
 
 
 class TestAvailableModels:
@@ -33,31 +29,20 @@ class TestAvailableModels:
 
 
 class TestGetActiveModel:
-    def test_returns_default_model(self) -> None:
-        with patch.dict("os.environ", {}, clear=False):
-            import app.classification.model_config as mc
-            original = mc.ACTIVE_MODEL_KEY
-            # patch the module-level constant
-            mc.ACTIVE_MODEL_KEY = "claude-sonnet-4-6"
-            model = get_active_model()
-            assert model.provider == "anthropic"
-            assert "sonnet" in model.model_id
-            mc.ACTIVE_MODEL_KEY = original
+    def test_returns_default_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(mc, "ACTIVE_MODEL_KEY", "claude-sonnet-4-6")
+        model = get_active_model()
+        assert model.provider == "anthropic"
+        assert "sonnet" in model.model_id
 
-    def test_invalid_key_raises_value_error(self) -> None:
-        import app.classification.model_config as mc
-        original = mc.ACTIVE_MODEL_KEY
-        mc.ACTIVE_MODEL_KEY = "totally-unknown-model"
+    def test_invalid_key_raises_value_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(mc, "ACTIVE_MODEL_KEY", "totally-unknown-model")
         with pytest.raises(ValueError, match="Unknown model"):
             get_active_model()
-        mc.ACTIVE_MODEL_KEY = original
 
-    def test_error_message_lists_available_keys(self) -> None:
-        import app.classification.model_config as mc
-        original = mc.ACTIVE_MODEL_KEY
-        mc.ACTIVE_MODEL_KEY = "bad-key"
+    def test_error_message_lists_available_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(mc, "ACTIVE_MODEL_KEY", "bad-key")
         with pytest.raises(ValueError) as exc_info:
             get_active_model()
         for key in AVAILABLE_MODELS:
             assert key in str(exc_info.value)
-        mc.ACTIVE_MODEL_KEY = original

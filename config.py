@@ -2,6 +2,8 @@ import logging
 import os
 from datetime import datetime
 
+from model_config import ModelConfig, get_active_model  # noqa: F401 — re-exported for callers
+
 
 # --- File paths ---
 CLIENTS_FILE: str = "data/clients.json"

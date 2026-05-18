@@ -1,22 +1,27 @@
-import logging
 import config
-from data_manager import load_clients, load_received_docs, get_missing_documents
-from notifier import notify_all
+from app.repositories import ClientRepository
+from app.notifications import MockSender, TwilioWhatsAppSender, Notifier
+from app.pipeline import ReportPipeline
 
 config.configure_logging()
 
 
 def main() -> None:
-    clients = load_clients(config.CLIENTS_FILE)
-    received_docs = load_received_docs(config.RECEIVED_DOCS_FILE)
+    repository = ClientRepository(config.CLIENTS_FILE, config.RECEIVED_DOCS_FILE)
 
-    reports = get_missing_documents(clients, received_docs, config.CURRENT_MONTH)
+    sender = (
+        MockSender()
+        if config.USE_MOCK
+        else TwilioWhatsAppSender(
+            account_sid=config.TWILIO_ACCOUNT_SID,
+            auth_token=config.TWILIO_AUTH_TOKEN,
+            from_number=config.TWILIO_WHATSAPP_FROM,
+        )
+    )
 
-    if not reports:
-        logging.info("All clients have submitted their documents for %s.", config.CURRENT_MONTH)
-        return
-
-    notify_all(reports, use_mock=config.USE_MOCK)
+    notifier = Notifier(sender)
+    pipeline = ReportPipeline(repository, notifier)
+    pipeline.run(config.CURRENT_MONTH)
 
 
 if __name__ == "__main__":

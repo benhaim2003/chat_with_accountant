@@ -58,8 +58,6 @@ AVAILABLE_MODELS: dict[str, ModelConfig] = {
     ),
 }
 
-# Set ACTIVE_MODEL env var to any key above to switch providers.
-# Defaults to Claude Sonnet 4.6 — change the fallback string to your preference.
 ACTIVE_MODEL_KEY: str = os.environ.get("ACTIVE_MODEL", "claude-sonnet-4-6")
 
 

@@ -4,7 +4,6 @@ from src.models.internal_message import InternalMessage, MessageType
 from src.core import session_manager
 from src.services.email_gateway import EmailGateway
 from src.services.file_handler import FileHandler
-from src.services.classifier import classify_document
 
 logger = logging.getLogger(__name__)
 
@@ -92,11 +91,9 @@ class MenuHandler:
         if message.message_type not in (MessageType.DOCUMENT, MessageType.PHOTO):
             return "Please send the file as a document or photo attachment."
 
-        doc_type = classify_document(message.file_path) if message.file_path else "other"
         subject = f"[CPA Bot] Document upload — chat {message.chat_id}"
         body = (
             f"A client (chat ID: {message.chat_id}) uploaded a document.\n"
-            f"Classified as: {doc_type}\n"
             f"Filename: {message.file_name or 'unknown'}"
         )
         thread_id = self._email.send(
@@ -195,10 +192,8 @@ class MenuHandler:
         )
 
         if message.message_type in (MessageType.DOCUMENT, MessageType.PHOTO):
-            doc_type = classify_document(message.file_path) if message.file_path else "other"
             body = (
                 f"Follow-up from client (chat ID: {message.chat_id}) — document.\n"
-                f"Classified as: {doc_type}\n"
                 f"Filename: {message.file_name or 'unknown'}"
             )
             self._email.send(

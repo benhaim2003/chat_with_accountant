@@ -120,12 +120,17 @@ class EmailGateway:
         if not self._reply_callback:
             return
 
-        # Match via In-Reply-To header (email threading) or the custom header we set
+        # Only process genuine replies — emails that reference a bot-originated thread.
+        # This prevents the bot from treating its own outgoing emails as replies,
+        # which would happen when sender == secretariat address (e.g. during testing).
         in_reply_to = msg.get("In-Reply-To", "").strip()
-        chat_id = self._thread_map.get(in_reply_to) or msg.get("X-CPA-Chat-ID", "").strip()
+        if not in_reply_to:
+            logger.debug("Skipping email: no In-Reply-To header")
+            return
 
+        chat_id = self._thread_map.get(in_reply_to)
         if not chat_id:
-            logger.debug("Skipping email with no matching chat session")
+            logger.debug("Skipping email: In-Reply-To not in thread map")
             return
 
         body = self._extract_body(msg)

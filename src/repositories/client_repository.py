@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from app.models.client import Client
+from src.models.client import Client
 
 logger = logging.getLogger(__name__)
 

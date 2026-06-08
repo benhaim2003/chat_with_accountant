@@ -2,6 +2,7 @@ from __future__ import annotations
 import email as email_lib
 import imaplib
 import logging
+import re
 import smtplib
 import threading
 import time
@@ -141,6 +142,18 @@ class EmailGateway:
             for part in msg.walk():
                 if part.get_content_type() == "text/plain":
                     payload = part.get_payload(decode=True)
-                    return payload.decode(errors="replace") if payload else ""
+                    raw = payload.decode(errors="replace") if payload else ""
+                    return self._strip_quoted_text(raw)
         payload = msg.get_payload(decode=True)
-        return payload.decode(errors="replace") if payload else ""
+        raw = payload.decode(errors="replace") if payload else ""
+        return self._strip_quoted_text(raw)
+
+    @staticmethod
+    def _strip_quoted_text(body: str) -> str:
+        # Gmail/Outlook append "On <date>, <name> <email> wrote:" before the quoted thread
+        match = re.search(r"\nOn .{10,200}wrote:\s*\n", body, re.DOTALL)
+        if match:
+            return body[: match.start()].strip()
+        # Fallback: drop lines that start with > (standard quote marker)
+        lines = [line for line in body.splitlines() if not line.startswith(">")]
+        return "\n".join(lines).strip()

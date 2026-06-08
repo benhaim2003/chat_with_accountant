@@ -17,13 +17,23 @@ _MENU_TEXT = (
     "  D — Other"
 )
 
-# Map every conversational state to its handler method name.
+_SESSION_DECISION_TEXT = (
+    "Is there anything else you'd like to send to the office?\n\n"
+    "  1 — Yes, keep this session open\n"
+    "  2 — No, close this session"
+)
+
+_CLOSE_KEYWORDS = {"2", "no", "close", "done", "end", "finish", "stop", "exit"}
+_KEEP_KEYWORDS = {"1", "yes", "keep", "continue", "more", "send", "open"}
+
 _STATE_HANDLERS = {
-    "awaiting_option": "_route_option",
-    "awaiting_file_upload": "_handle_upload",
-    "awaiting_file_request": "_handle_file_request",
-    "awaiting_accountant_message": "_handle_accountant_message",
-    "awaiting_other": "_handle_other",
+    "awaiting_option":            "_route_option",
+    "awaiting_file_upload":       "_handle_upload",
+    "awaiting_file_request":      "_handle_file_request",
+    "awaiting_accountant_message":"_handle_accountant_message",
+    "awaiting_other":             "_handle_other",
+    "awaiting_session_decision":  "_handle_session_decision",
+    "session_open":               "_handle_session_open",
 }
 
 
@@ -42,7 +52,6 @@ class MenuHandler:
         if handler_name:
             return getattr(self, handler_name)(message)
 
-        # Unknown state — reset to menu
         logger.warning("Unknown state '%s' for %s — resetting", session.state, message.chat_id)
         return self._show_menu(message)
 
@@ -97,11 +106,13 @@ class MenuHandler:
             chat_id=message.chat_id,
         )
         session_manager.set_state(
-            message.chat_id, "idle", message.platform, active_thread_id=thread_id
+            message.chat_id, "awaiting_session_decision", message.platform,
+            active_thread_id=thread_id,
+            follow_up_subject=subject,
         )
         return (
-            "Thank you! Your document has been received and forwarded to the office.\n"
-            "We will get back to you shortly."
+            "Thank you! Your document has been received and forwarded to the office.\n\n"
+            + _SESSION_DECISION_TEXT
         )
 
     # ------------------------------------------------- option B: file request
@@ -114,9 +125,14 @@ class MenuHandler:
         )
         thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id)
         session_manager.set_state(
-            message.chat_id, "idle", message.platform, active_thread_id=thread_id
+            message.chat_id, "awaiting_session_decision", message.platform,
+            active_thread_id=thread_id,
+            follow_up_subject=subject,
         )
-        return "Your request has been forwarded. The office will send you the file shortly."
+        return (
+            "Your request has been forwarded to the office.\n\n"
+            + _SESSION_DECISION_TEXT
+        )
 
     # ------------------------------------------ option C: accountant message
 
@@ -128,9 +144,14 @@ class MenuHandler:
         )
         thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id)
         session_manager.set_state(
-            message.chat_id, "idle", message.platform, active_thread_id=thread_id
+            message.chat_id, "awaiting_session_decision", message.platform,
+            active_thread_id=thread_id,
+            follow_up_subject=subject,
         )
-        return "Your message has been forwarded to your accountant. They will be in touch soon."
+        return (
+            "Your message has been forwarded to your accountant.\n\n"
+            + _SESSION_DECISION_TEXT
+        )
 
     # ---------------------------------------------------- option D: other
 
@@ -146,3 +167,51 @@ class MenuHandler:
             message.chat_id, "idle", message.platform, active_thread_id=thread_id
         )
         return "Thank you! Your message has been received. We will get back to you soon."
+
+    # ------------------------------------------- session close/keep decision
+
+    def _handle_session_decision(self, message: InternalMessage) -> str:
+        text = (message.text or "").strip().lower()
+
+        if text in _CLOSE_KEYWORDS:
+            session_manager.set_state(message.chat_id, "idle", message.platform)
+            return (
+                "Session closed. Whenever you need us again, just send a message and "
+                "we'll show you the menu."
+            )
+
+        if text in _KEEP_KEYWORDS:
+            session_manager.set_state(message.chat_id, "session_open", message.platform)
+            return "Got it! Send your next message and it will be forwarded to the office."
+
+        return f"Please reply with 1 (keep) or 2 (close).\n\n{_SESSION_DECISION_TEXT}"
+
+    # ----------------------------------------- open session: free-form relay
+
+    def _handle_session_open(self, message: InternalMessage) -> str:
+        session = session_manager.get_session(message.chat_id, message.platform)
+        subject = session.context.get(
+            "follow_up_subject", f"[CPA Bot] Follow-up — chat {message.chat_id}"
+        )
+
+        if message.message_type in (MessageType.DOCUMENT, MessageType.PHOTO):
+            doc_type = classify_document(message.file_path) if message.file_path else "other"
+            body = (
+                f"Follow-up from client (chat ID: {message.chat_id}) — document.\n"
+                f"Classified as: {doc_type}\n"
+                f"Filename: {message.file_name or 'unknown'}"
+            )
+            self._email.send(
+                subject=subject,
+                body=body,
+                attachment_path=message.file_path,
+                chat_id=message.chat_id,
+            )
+        else:
+            body = f"Follow-up from client (chat ID: {message.chat_id}):\n\n{message.text}"
+            self._email.send(subject=subject, body=body, chat_id=message.chat_id)
+
+        session_manager.set_state(
+            message.chat_id, "awaiting_session_decision", message.platform
+        )
+        return f"Message forwarded to the office.\n\n{_SESSION_DECISION_TEXT}"

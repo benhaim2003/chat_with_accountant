@@ -1,37 +1,67 @@
-# Accounting Document Reminder System - Project Guidelines
+# Project Context: Chat with Accountant
 
-## Project Overview
-This project is a lightweight, automated system built for an accounting firm. Its primary purpose is to cross-reference expected monthly client documents (e.g., utility bills, tax invoices) against actually received documents, identify missing files, and send automated reminders to clients.
+## 1. Project Overview
+"Chat with Accountant" is an automated messaging and file-handling system designed for a Certified Public Accountant (CPA) office. The ultimate goal of the project is to:
+* Streamline how the office handles routine client requests.
+* Reduce the administrative burden on the secretariat.
+* Improve client response times through an easy-to-use chat interface.
 
-## Architecture & Scope (MVP)
-1. **Data Pipeline:** Read client configuration and expected document frequency.
-2. **Core Engine:** Compare expected documents vs. dummy/local received files.
-3. **Notification API:** Generate and send tailored reminder messages (e.g., via WhatsApp/SMS API).
-4. **Modularity:** The system must be strictly modular. Data ingestion, logic, and external API calls must reside in separate modules.
+The project is structured into three distinct development phases: **Proof of Concept (POC)**, **Minimum Viable Product (MVP)**, and **Next Stage (AI Integration)**.
 
-## Tech Stack
-- **Language:** Python 3.11+
-- **Data Handling:** Native JSON/Dictionaries or `pandas` (only if data manipulation requires it).
-- **Environment:** Virtual environment (`venv`), ready to be containerized (Docker) in the future.
+### Architectural Philosophy: Forward Compatibility
+A core requirement of this project is zero technical debt. The transition between phases must be a seamless evolution, not a complete rewrite. The codebase must be modular from day one—specifically anticipating the future addition of new platforms (WhatsApp), database-driven authentication, and LLM endpoints. 
 
-## Strict Coding Guidelines
-As an AI coding assistant, you must adhere strictly to the following rules:
+---
 
-1. **Type Hinting:** ALL functions and methods MUST include complete Python type hints (e.g., `def process_data(data: dict) -> list[str]:`).
-2. **No Over-Engineering:** We are building an MVP. Do not add complex database setups (like PostgreSQL or SQLAlchemy) or heavy web frameworks (like Django) unless explicitly instructed. Stick to simple JSON/local files for now.
-3. **Dependencies:** Do NOT install external libraries unless absolutely necessary. Ask for user confirmation before adding a new dependency to `requirements.txt`.
-4. **Error Handling & Logging:** Use Python's built-in `logging` module instead of `print()`. Catch specific exceptions rather than using bare `except:`.
-5. **Language:** Keep variables, functions, and documentation in English. 
+## 2. Phase 1: Proof of Concept (POC)
+The POC focuses on establishing a basic communication bridge between the client's chat app and the CPA office's email system.
 
-## Project Structure (Target)
-├── main.py # Entry point
-├── config.py # Environment variables and constants
-├── data_manager.py # Logic for parsing expected vs. received documents
-├── notifier.py # API integration for sending messages
-├── dummy_files/ # Directory to mock Google Drive/received files
-├── requirements.txt
-└── CLAUDE.md # You are reading this file
+* **Primary Platform:** Telegram
 
-## Execution Commands
-- To run the main script: `python main.py`
-- To test specific modules: `python -m unittest` or `pytest`
+### Strict Constraint: No "POC Shortcuts"
+While this phase is a proof of concept, "throwaway code" or hardcoded workarounds are strictly prohibited. The underlying message-handling architecture must be scalable and extensible so that moving to the MVP and Next Stage requires adding new modules rather than refactoring the core system.
+
+### User Flow
+1. The client initiates a conversation by sending a message to the bot.
+2. The bot immediately responds with an automated menu featuring four default options:
+    * **Option A:** Upload an invoice or bill of costs.
+    * **Option B:** Request a specific file currently held by the CPA office.
+    * **Option C:** Leave a message for their personal accountant.
+    * **Option D:** Other (Allows the client to type a free-text message).
+
+### Backend Workflow (The Email Bridge)
+1. Once the client makes a selection or uploads a file, the bot generates an email containing the client's details and their specific request.
+2. This email is sent directly to the office secretariat.
+3. The secretary reviews the request and replies directly to the email.
+4. The bot intercepts the secretary's email reply and forwards the text/files back to the client via Telegram.
+
+---
+
+## 3. Phase 2: Minimum Viable Product (MVP)
+The MVP builds upon the POC by introducing a new communication channel, user authentication, and basic automation to reduce the secretariat's workload.
+
+* **Expanded Platforms:** Telegram and WhatsApp
+
+### New Features & Automations
+* **Client Authentication:** The system will identify and verify the client based on their phone number.
+* **Self-Service File Retrieval:** By leveraging phone number authentication, the bot will automatically locate and send requested files back to the client without requiring the secretary's intervention.
+* **Automated Document Routing:** When an authenticated client uploads files (like bills or invoices), the bot will automatically identify the client and forward those specific documents directly to their assigned personal accountant, bypassing the general secretariat inbox.
+
+---
+
+## 4. Phase 3: Next Stage (AI Integration)
+The final stage upgrades the bot from a simple menu-routing system to an intelligent conversational agent.
+
+### New Features & Automations
+* **LLM Integration:** An advanced Large Language Model (LLM) will be integrated to process the "Other" (free-text) inputs from the client.
+* **Conversational Capabilities:** The bot will be able to read, understand, and extract intent from the client's free text. It will autonomously continue the correspondence with the client, answering queries or guiding them through processes without requiring immediate human intervention.
+
+---
+
+## 5. Key Stakeholders & Roles
+
+| Stakeholder | Role & Interaction |
+| :--- | :--- |
+| **Clients** | End-users interacting with the bot via Telegram or WhatsApp to submit documents, request files, or ask questions. |
+| **Secretariat (Admin)** | The frontline office workers who, in the POC stage, manage client requests via email. Their manual workload will decrease in later phases. |
+| **Personal Accountants** | The CPAs who ultimately process the bills/invoices and handle complex client messages. In the MVP stage, they will receive documents directly from the bot. |

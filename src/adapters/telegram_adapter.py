@@ -47,7 +47,7 @@ class TelegramAdapter(PlatformAdapter):
 
     def start(self) -> None:
         logger.info("Telegram adapter started — polling for updates")
-        self._app.run_polling()
+        self._app.run_polling(drop_pending_updates=True)
 
     # --------------------------------------------------------------- handlers
 

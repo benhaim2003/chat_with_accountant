@@ -1,5 +1,7 @@
 anthropic==0.102.0
 pdfplumber==0.11.9
 fpdf2==2.8.7
+python-telegram-bot==20.7
+python-dotenv==1.0.0
 
 pytest

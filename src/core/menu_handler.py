@@ -8,31 +8,37 @@ from src.services.file_handler import FileHandler
 logger = logging.getLogger(__name__)
 
 _MENU_TEXT = (
-    "Welcome to the CPA Office Bot.\n\n"
-    "Please choose an option:\n"
-    "  A — Upload an invoice or bill of costs\n"
-    "  B — Request a file from the office\n"
-    "  C — Leave a message for your accountant\n"
-    "  D — Other"
+    "ברוכים הבאים לבוט של משרד רואה החשבון.\n\n"
+    "אנא בחר/י אפשרות:\n"
+    "  א — העלאת חשבונית או שטר עלויות\n"
+    "  ב — בקשת קובץ מהמשרד\n"
+    "  ג — השארת הודעה לרואה החשבון\n"
+    "  ד — אחר"
 )
 
 _SESSION_DECISION_TEXT = (
-    "Is there anything else you'd like to send to the office?\n\n"
-    "  1 — Yes, keep this session open\n"
-    "  2 — No, close this session"
+    "האם תרצה/י לשלוח עוד משהו למשרד?\n\n"
+    "  1 — כן, השאר את הסשן פתוח\n"
+    "  2 — לא, סגור את הסשן"
 )
 
-_CLOSE_KEYWORDS = {"2", "no", "close", "done", "end", "finish", "stop", "exit"}
-_KEEP_KEYWORDS = {"1", "yes", "keep", "continue", "more", "send", "open"}
+_CLOSE_KEYWORDS = {"2", "לא", "סגור", "סיים", "סגירה", "יציאה"}
+_KEEP_KEYWORDS  = {"1", "כן", "פתוח", "המשך", "שמור", "עוד"}
+
+# Accept both Hebrew (א/ב/ג/ד) and Latin (A/B/C/D) for accessibility
+_OPTION_A = {"א", "A"}
+_OPTION_B = {"ב", "B"}
+_OPTION_C = {"ג", "C"}
+_OPTION_D = {"ד", "D"}
 
 _STATE_HANDLERS = {
-    "awaiting_option":            "_route_option",
-    "awaiting_file_upload":       "_handle_upload",
-    "awaiting_file_request":      "_handle_file_request",
-    "awaiting_accountant_message":"_handle_accountant_message",
-    "awaiting_other":             "_handle_other",
-    "awaiting_session_decision":  "_handle_session_decision",
-    "session_open":               "_handle_session_open",
+    "awaiting_option":             "_route_option",
+    "awaiting_file_upload":        "_handle_upload",
+    "awaiting_file_request":       "_handle_file_request",
+    "awaiting_accountant_message": "_handle_accountant_message",
+    "awaiting_other":              "_handle_other",
+    "awaiting_session_decision":   "_handle_session_decision",
+    "session_open":                "_handle_session_open",
 }
 
 
@@ -65,36 +71,36 @@ class MenuHandler:
     def _route_option(self, message: InternalMessage) -> str:
         choice = (message.text or "").strip().upper()
 
-        if choice == "A":
+        if choice in _OPTION_A:
             session_manager.set_state(message.chat_id, "awaiting_file_upload", message.platform)
-            return "Please upload the invoice or bill of costs as a PDF."
+            return "אנא העלה/י את החשבונית או שטר העלויות כקובץ PDF."
 
-        if choice == "B":
+        if choice in _OPTION_B:
             session_manager.set_state(message.chat_id, "awaiting_file_request", message.platform)
-            return "Please describe which file you need from the office."
+            return "אנא תאר/י איזה קובץ אתה/את צריך/ה מהמשרד."
 
-        if choice == "C":
+        if choice in _OPTION_C:
             session_manager.set_state(
                 message.chat_id, "awaiting_accountant_message", message.platform
             )
-            return "Please type your message for your accountant."
+            return "אנא הקלד/י את ההודעה שלך לרואה החשבון."
 
-        if choice == "D":
+        if choice in _OPTION_D:
             session_manager.set_state(message.chat_id, "awaiting_other", message.platform)
-            return "Please type your message and we will get back to you."
+            return "אנא הקלד/י את הודעתך ונחזור אליך בהקדם."
 
-        return f"Please reply with A, B, C, or D.\n\n{_MENU_TEXT}"
+        return f"אנא ענה/י עם א, ב, ג, או ד.\n\n{_MENU_TEXT}"
 
-    # ---------------------------------------------------- option A: upload
+    # ---------------------------------------------------- option א: upload
 
     def _handle_upload(self, message: InternalMessage) -> str:
         if message.message_type not in (MessageType.DOCUMENT, MessageType.PHOTO):
-            return "Please send the file as a document or photo attachment."
+            return "אנא שלח/י את הקובץ כמסמך או תמונה מצורפת."
 
-        subject = f"[CPA Bot] Document upload — chat {message.chat_id}"
+        subject = f"[CPA Bot] העלאת מסמך — צ'אט {message.chat_id}"
         body = (
-            f"A client (chat ID: {message.chat_id}) uploaded a document.\n"
-            f"Filename: {message.file_name or 'unknown'}"
+            f"לקוח/ה (מזהה צ'אט: {message.chat_id}) העלה/תה מסמך.\n"
+            f"שם קובץ: {message.file_name or 'לא ידוע'}"
         )
         thread_id = self._email.send(
             subject=subject,
@@ -108,17 +114,17 @@ class MenuHandler:
             follow_up_subject=subject,
         )
         return (
-            "Thank you! Your document has been received and forwarded to the office.\n\n"
+            "תודה! המסמך שלך התקבל והועבר למשרד.\n\n"
             + _SESSION_DECISION_TEXT
         )
 
-    # ------------------------------------------------- option B: file request
+    # ------------------------------------------------- option ב: file request
 
     def _handle_file_request(self, message: InternalMessage) -> str:
-        subject = f"[CPA Bot] File request — chat {message.chat_id}"
+        subject = f"[CPA Bot] בקשת קובץ — צ'אט {message.chat_id}"
         body = (
-            f"A client (chat ID: {message.chat_id}) is requesting a file.\n\n"
-            f"Request: {message.text}"
+            f"לקוח/ה (מזהה צ'אט: {message.chat_id}) מבקש/ת קובץ.\n\n"
+            f"בקשה: {message.text}"
         )
         thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id)
         session_manager.set_state(
@@ -127,16 +133,16 @@ class MenuHandler:
             follow_up_subject=subject,
         )
         return (
-            "Your request has been forwarded to the office.\n\n"
+            "בקשתך הועברה למשרד.\n\n"
             + _SESSION_DECISION_TEXT
         )
 
-    # ------------------------------------------ option C: accountant message
+    # ------------------------------------------ option ג: accountant message
 
     def _handle_accountant_message(self, message: InternalMessage) -> str:
-        subject = f"[CPA Bot] Client message — chat {message.chat_id}"
+        subject = f"[CPA Bot] הודעת לקוח — צ'אט {message.chat_id}"
         body = (
-            f"A client (chat ID: {message.chat_id}) left a message:\n\n"
+            f"לקוח/ה (מזהה צ'אט: {message.chat_id}) השאיר/ה הודעה:\n\n"
             f"{message.text}"
         )
         thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id)
@@ -146,16 +152,16 @@ class MenuHandler:
             follow_up_subject=subject,
         )
         return (
-            "Your message has been forwarded to your accountant.\n\n"
+            "הודעתך הועברה לרואה החשבון שלך.\n\n"
             + _SESSION_DECISION_TEXT
         )
 
-    # ---------------------------------------------------- option D: other
+    # ---------------------------------------------------- option ד: other
 
     def _handle_other(self, message: InternalMessage) -> str:
-        subject = f"[CPA Bot] General inquiry — chat {message.chat_id}"
+        subject = f"[CPA Bot] פנייה כללית — צ'אט {message.chat_id}"
         body = (
-            f"A client (chat ID: {message.chat_id}) sent a general inquiry:\n\n"
+            f"לקוח/ה (מזהה צ'אט: {message.chat_id}) שלח/ה פנייה כללית:\n\n"
             f"{message.text}"
         )
         # Phase 3 hook: replace email send with LLM processing here
@@ -163,38 +169,35 @@ class MenuHandler:
         session_manager.set_state(
             message.chat_id, "idle", message.platform, active_thread_id=thread_id
         )
-        return "Thank you! Your message has been received. We will get back to you soon."
+        return "תודה! הודעתך התקבלה. ניצור איתך קשר בהקדם."
 
     # ------------------------------------------- session close/keep decision
 
     def _handle_session_decision(self, message: InternalMessage) -> str:
-        text = (message.text or "").strip().lower()
+        text = (message.text or "").strip()
 
         if text in _CLOSE_KEYWORDS:
             session_manager.set_state(message.chat_id, "idle", message.platform)
-            return (
-                "Session closed. Whenever you need us again, just send a message and "
-                "we'll show you the menu."
-            )
+            return "הסשן נסגר. בכל פעם שתזדקק/י לעזרה, פשוט שלח/י הודעה ונציג לך את התפריט."
 
         if text in _KEEP_KEYWORDS:
             session_manager.set_state(message.chat_id, "session_open", message.platform)
-            return "Got it! Send your next message and it will be forwarded to the office."
+            return "מצוין! שלח/י את ההודעה הבאה שלך והיא תועבר למשרד."
 
-        return f"Please reply with 1 (keep) or 2 (close).\n\n{_SESSION_DECISION_TEXT}"
+        return f"אנא ענה/י עם 1 (המשך) או 2 (סגור).\n\n{_SESSION_DECISION_TEXT}"
 
     # ----------------------------------------- open session: free-form relay
 
     def _handle_session_open(self, message: InternalMessage) -> str:
         session = session_manager.get_session(message.chat_id, message.platform)
         subject = session.context.get(
-            "follow_up_subject", f"[CPA Bot] Follow-up — chat {message.chat_id}"
+            "follow_up_subject", f"[CPA Bot] המשך שיחה — צ'אט {message.chat_id}"
         )
 
         if message.message_type in (MessageType.DOCUMENT, MessageType.PHOTO):
             body = (
-                f"Follow-up from client (chat ID: {message.chat_id}) — document.\n"
-                f"Filename: {message.file_name or 'unknown'}"
+                f"המשך מלקוח/ה (מזהה צ'אט: {message.chat_id}) — מסמך.\n"
+                f"שם קובץ: {message.file_name or 'לא ידוע'}"
             )
             self._email.send(
                 subject=subject,
@@ -203,10 +206,10 @@ class MenuHandler:
                 chat_id=message.chat_id,
             )
         else:
-            body = f"Follow-up from client (chat ID: {message.chat_id}):\n\n{message.text}"
+            body = f"המשך מלקוח/ה (מזהה צ'אט: {message.chat_id}):\n\n{message.text}"
             self._email.send(subject=subject, body=body, chat_id=message.chat_id)
 
         session_manager.set_state(
             message.chat_id, "awaiting_session_decision", message.platform
         )
-        return f"Message forwarded to the office.\n\n{_SESSION_DECISION_TEXT}"
+        return f"ההודעה הועברה למשרד.\n\n{_SESSION_DECISION_TEXT}"

@@ -44,7 +44,7 @@ def main() -> None:
     # Wire the email reply callback: secretary replies → forwarded to client via Telegram
     def on_secretary_reply(chat_id: str, text: str, attachments: list[str]) -> None:
         logger.info("Forwarding secretary reply to chat %s", chat_id)
-        adapter.send_text(chat_id, f"Message from your accountant's office:\n\n{text}")
+        adapter.send_text(chat_id, f"הודעה ממשרד רואה החשבון שלך:\n\n{text}")
         for path in attachments:
             adapter.send_file(chat_id, path)
 

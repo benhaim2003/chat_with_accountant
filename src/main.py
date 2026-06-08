@@ -42,11 +42,21 @@ def main() -> None:
     adapter = TelegramAdapter(token=token, router=router, file_handler=file_handler)
 
     # Wire the email reply callback: secretary replies → forwarded to client via Telegram
-    def on_secretary_reply(chat_id: str, text: str, attachments: list[str]) -> None:
-        logger.info("Forwarding secretary reply to chat %s", chat_id)
-        adapter.send_text(chat_id, f"הודעה ממשרד רואה החשבון שלך:\n\n{text}")
+    def on_secretary_reply(chat_id: str, text: str, attachments: list[str], close_requested: bool) -> None:
+        from src.core import session_manager
+        from src.core.menu_handler import _SESSION_DECISION_TEXT
+        logger.info("Forwarding secretary reply to chat %s (close_requested=%s)", chat_id, close_requested)
+
+        if close_requested:
+            adapter.send_text(chat_id, f"הודעה ממשרד רואה החשבון שלך:\n\n{text}\n\n{_SESSION_DECISION_TEXT}")
+        else:
+            adapter.send_text(chat_id, f"הודעה ממשרד רואה החשבון שלך:\n\n{text}")
+
         for path in attachments:
             adapter.send_file(chat_id, path)
+
+        if close_requested:
+            session_manager.set_state(chat_id, "awaiting_session_decision", "telegram")
 
     email_gateway.set_reply_callback(on_secretary_reply)
     email_gateway.start_polling()

@@ -15,8 +15,8 @@ from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
-# Signature: (chat_id, reply_text, attachment_paths) -> None
-ReplyCallback = Callable[[str, str, list[str]], None]
+# Signature: (chat_id, reply_text, attachment_paths, close_requested) -> None
+ReplyCallback = Callable[[str, str, list[str], bool], None]
 
 
 class EmailGateway:
@@ -134,19 +134,26 @@ class EmailGateway:
             logger.debug("Skipping email: In-Reply-To not in thread map")
             return
 
-        body = self._extract_body(msg)
-        self._reply_callback(chat_id, body, [])
+        body, close_requested = self._extract_body_and_marker(msg)
+        self._reply_callback(chat_id, body, [], close_requested)
 
-    def _extract_body(self, msg) -> str:
+    def _extract_body_and_marker(self, msg) -> tuple[str, bool]:
+        raw = self._get_raw_text(msg)
+        clean = self._strip_quoted_text(raw)
+        close_requested = "#סגור" in clean
+        if close_requested:
+            clean = re.sub(r"#סגור", "", clean).strip()
+        return clean, close_requested
+
+    @staticmethod
+    def _get_raw_text(msg) -> str:
         if msg.is_multipart():
             for part in msg.walk():
                 if part.get_content_type() == "text/plain":
                     payload = part.get_payload(decode=True)
-                    raw = payload.decode(errors="replace") if payload else ""
-                    return self._strip_quoted_text(raw)
+                    return payload.decode(errors="replace") if payload else ""
         payload = msg.get_payload(decode=True)
-        raw = payload.decode(errors="replace") if payload else ""
-        return self._strip_quoted_text(raw)
+        return payload.decode(errors="replace") if payload else ""
 
     @staticmethod
     def _strip_quoted_text(body: str) -> str:

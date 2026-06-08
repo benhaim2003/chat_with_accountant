@@ -17,15 +17,14 @@ _MENU_TEXT = (
 )
 
 _SESSION_DECISION_TEXT = (
-    "האם תרצה/י לשלוח עוד משהו למשרד?\n\n"
-    "  1 — כן, השאר את הסשן פתוח\n"
-    "  2 — לא, סגור את הסשן"
+    "האם תרצה/י לסגור את השיחה?\n\n"
+    "  1 — כן, סגור את הסשן\n"
+    "  2 — לא, אני רוצה להמשיך לשלוח הודעות"
 )
 
-_CLOSE_KEYWORDS = {"2", "לא", "סגור", "סיים", "סגירה", "יציאה"}
-_KEEP_KEYWORDS  = {"1", "כן", "פתוח", "המשך", "שמור", "עוד"}
+_CLOSE_KEYWORDS = {"1", "כן", "סגור", "סיים", "סגירה", "יציאה"}
+_KEEP_KEYWORDS  = {"2", "לא", "פתוח", "המשך", "עוד"}
 
-# Accept both Hebrew (א/ב/ג/ד) and Latin (A/B/C/D) for accessibility
 _OPTION_A = {"א", "A"}
 _OPTION_B = {"ב", "B"}
 _OPTION_C = {"ג", "C"}
@@ -92,6 +91,7 @@ class MenuHandler:
         return f"אנא ענה/י עם א, ב, ג, או ד.\n\n{_MENU_TEXT}"
 
     # ---------------------------------------------------- option א: upload
+    # Logical end = client finishes uploading → ask close/keep immediately.
 
     def _handle_upload(self, message: InternalMessage) -> str:
         if message.message_type not in (MessageType.DOCUMENT, MessageType.PHOTO):
@@ -119,6 +119,8 @@ class MenuHandler:
         )
 
     # ------------------------------------------------- option ב: file request
+    # Logical end = secretary sends back the file → close/keep triggered from
+    # the email reply callback in main.py, NOT here.
 
     def _handle_file_request(self, message: InternalMessage) -> str:
         subject = f"[CPA Bot] בקשת קובץ — צ'אט {message.chat_id}"
@@ -128,16 +130,16 @@ class MenuHandler:
         )
         thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id)
         session_manager.set_state(
-            message.chat_id, "awaiting_session_decision", message.platform,
+            message.chat_id, "session_open", message.platform,
             active_thread_id=thread_id,
             follow_up_subject=subject,
+            session_type="file_request",
         )
-        return (
-            "בקשתך הועברה למשרד.\n\n"
-            + _SESSION_DECISION_TEXT
-        )
+        return "בקשתך הועברה למשרד. ניתן לשלוח הודעות נוספות בכל עת."
 
     # ------------------------------------------ option ג: accountant message
+    # Logical end = secretary sends a response → close/keep triggered from
+    # the email reply callback in main.py, NOT here.
 
     def _handle_accountant_message(self, message: InternalMessage) -> str:
         subject = f"[CPA Bot] הודעת לקוח — צ'אט {message.chat_id}"
@@ -147,14 +149,12 @@ class MenuHandler:
         )
         thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id)
         session_manager.set_state(
-            message.chat_id, "awaiting_session_decision", message.platform,
+            message.chat_id, "session_open", message.platform,
             active_thread_id=thread_id,
             follow_up_subject=subject,
+            session_type="accountant_message",
         )
-        return (
-            "הודעתך הועברה לרואה החשבון שלך.\n\n"
-            + _SESSION_DECISION_TEXT
-        )
+        return "הודעתך הועברה לרואה החשבון שלך. ניתן לשלוח הודעות נוספות בכל עת."
 
     # ---------------------------------------------------- option ד: other
 
@@ -167,11 +167,17 @@ class MenuHandler:
         # Phase 3 hook: replace email send with LLM processing here
         thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id)
         session_manager.set_state(
-            message.chat_id, "idle", message.platform, active_thread_id=thread_id
+            message.chat_id, "session_open", message.platform,
+            active_thread_id=thread_id,
+            follow_up_subject=subject,
+            session_type="other",
         )
-        return "תודה! הודעתך התקבלה. ניצור איתך קשר בהקדם."
+        return "תודה! הודעתך התקבלה. ניתן לשלוח הודעות נוספות בכל עת."
 
     # ------------------------------------------- session close/keep decision
+    # Triggered after secretary sends a reply (via email callback in main.py)
+    # or after option א completes.
+    # Only 1/2 (or matching keywords) are accepted; anything else re-asks.
 
     def _handle_session_decision(self, message: InternalMessage) -> str:
         text = (message.text or "").strip()
@@ -184,7 +190,7 @@ class MenuHandler:
             session_manager.set_state(message.chat_id, "session_open", message.platform)
             return "מצוין! שלח/י את ההודעה הבאה שלך והיא תועבר למשרד."
 
-        return f"אנא ענה/י עם 1 (המשך) או 2 (סגור).\n\n{_SESSION_DECISION_TEXT}"
+        return f"אנא ענה/י 1 (לסגירה) או 2 (להמשך).\n\n{_SESSION_DECISION_TEXT}"
 
     # ----------------------------------------- open session: free-form relay
 
@@ -209,7 +215,6 @@ class MenuHandler:
             body = f"המשך מלקוח/ה (מזהה צ'אט: {message.chat_id}):\n\n{message.text}"
             self._email.send(subject=subject, body=body, chat_id=message.chat_id)
 
-        session_manager.set_state(
-            message.chat_id, "awaiting_session_decision", message.platform
-        )
-        return f"ההודעה הועברה למשרד.\n\n{_SESSION_DECISION_TEXT}"
+        # Stay open — close/keep will be triggered when the secretary replies
+        session_manager.set_state(message.chat_id, "session_open", message.platform)
+        return "✓ נשלח"

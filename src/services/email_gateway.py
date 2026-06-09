@@ -69,10 +69,7 @@ class EmailGateway:
             msg.attach(part)
 
         try:
-            with smtplib.SMTP(self._smtp_host, self._smtp_port) as server:
-                server.starttls()
-                server.login(self._username, self._password)
-                server.sendmail(self._username, self._secretariat, msg.as_string())
+            self._smtp_send(msg.as_string())
             if chat_id:
                 self._thread_map[message_id] = chat_id
             logger.info("Email sent: %s", subject)
@@ -80,6 +77,21 @@ class EmailGateway:
         except Exception as exc:
             logger.error("Failed to send email: %s", exc)
             return None
+
+    def _smtp_send(self, raw: str) -> None:
+        # Port 465 = implicit SSL (Yahoo, some others).
+        # Any other port = explicit STARTTLS (Gmail 587, Yahoo 587, etc.).
+        if self._smtp_port == 465:
+            with smtplib.SMTP_SSL(self._smtp_host, self._smtp_port) as server:
+                server.login(self._username, self._password)
+                server.sendmail(self._username, self._secretariat, raw)
+        else:
+            with smtplib.SMTP(self._smtp_host, self._smtp_port) as server:
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
+                server.login(self._username, self._password)
+                server.sendmail(self._username, self._secretariat, raw)
 
     # ---------------------------------------------------------------- polling
 
@@ -157,10 +169,14 @@ class EmailGateway:
 
     @staticmethod
     def _strip_quoted_text(body: str) -> str:
-        # Gmail/Outlook append "On <date>, <name> <email> wrote:" before the quoted thread
-        match = re.search(r"\nOn .{10,200}wrote:\s*\n", body, re.DOTALL)
+        # Pattern 1 — Gmail / Yahoo / Apple Mail: "On <date>, <name> wrote:" (single or multi-line)
+        match = re.search(r"\nOn\s.{5,300}wrote:\s*\n", body, re.DOTALL)
         if match:
             return body[: match.start()].strip()
-        # Fallback: drop lines that start with > (standard quote marker)
+        # Pattern 2 — Outlook: "From: ... Sent: ... To: ... Subject: ..."
+        match = re.search(r"\n[-_]{3,}\s*\n.*?From:.*?Sent:", body, re.DOTALL)
+        if match:
+            return body[: match.start()].strip()
+        # Pattern 3 — standard > quote markers
         lines = [line for line in body.splitlines() if not line.startswith(">")]
         return "\n".join(lines).strip()

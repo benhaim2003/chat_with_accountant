@@ -186,12 +186,19 @@ class EmailGateway:
         if not msg.is_multipart():
             return saved
         for part in msg.walk():
+            # Skip container and body parts
             if part.get_content_maintype() == "multipart":
                 continue
-            disposition = part.get("Content-Disposition", "")
-            if "attachment" not in disposition:
+            if part.get_content_type() in ("text/plain", "text/html"):
                 continue
-            filename = part.get_filename() or f"attachment_{uuid.uuid4()}"
+            # Accept if explicitly marked as attachment OR if it carries a filename.
+            # Some clients (Gmail, Yahoo) send docx/xlsx as Content-Disposition: inline
+            # or omit the header entirely — checking for a filename catches those cases.
+            disposition = part.get("Content-Disposition", "")
+            filename = part.get_filename()
+            if "attachment" not in disposition and not filename:
+                continue
+            filename = filename or f"attachment_{uuid.uuid4()}"
             data = part.get_payload(decode=True)
             if data:
                 dest = _ATTACHMENT_DIR / filename

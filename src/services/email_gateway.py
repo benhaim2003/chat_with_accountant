@@ -4,6 +4,7 @@ import imaplib
 import logging
 import re
 import smtplib
+import tempfile
 import threading
 import time
 import uuid
@@ -12,6 +13,9 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Callable, Optional
+
+_ATTACHMENT_DIR = Path(tempfile.gettempdir()) / "cpa_bot_uploads"
+_ATTACHMENT_DIR.mkdir(exist_ok=True)
 
 logger = logging.getLogger(__name__)
 
@@ -151,8 +155,15 @@ class EmailGateway:
             logger.debug("Skipping email: In-Reply-To not in thread map")
             return
 
+        # Chain: store this reply's own Message-ID so that if the secretary
+        # replies again (e.g. sends #close as a follow-up), it is still matched.
+        reply_id = msg.get("Message-ID", "").strip()
+        if reply_id:
+            self._thread_map[reply_id] = chat_id
+
         body, close_requested = self._extract_body_and_marker(msg)
-        self._reply_callback(chat_id, body, [], close_requested)
+        attachments = self._extract_attachments(msg)
+        self._reply_callback(chat_id, body, attachments, close_requested)
 
     _CLOSE_MARKER = "#close"
 
@@ -168,6 +179,26 @@ class EmailGateway:
         if close_requested:
             clean = re.sub(r"#close", "", clean, flags=re.IGNORECASE).strip()
         return clean, close_requested
+
+    @staticmethod
+    def _extract_attachments(msg) -> list[str]:
+        saved = []
+        if not msg.is_multipart():
+            return saved
+        for part in msg.walk():
+            if part.get_content_maintype() == "multipart":
+                continue
+            disposition = part.get("Content-Disposition", "")
+            if "attachment" not in disposition:
+                continue
+            filename = part.get_filename() or f"attachment_{uuid.uuid4()}"
+            data = part.get_payload(decode=True)
+            if data:
+                dest = _ATTACHMENT_DIR / filename
+                dest.write_bytes(data)
+                saved.append(str(dest))
+                logger.debug("Saved secretary attachment: %s", dest)
+        return saved
 
     @staticmethod
     def _get_raw_text(msg) -> str:

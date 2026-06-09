@@ -60,7 +60,12 @@ class EmailGateway:
         msg["Message-ID"] = message_id
         if chat_id:
             msg["X-CPA-Chat-ID"] = chat_id
-        msg.attach(MIMEText(body, "plain"))
+        footer = (
+            "\n\n---\n"
+            "To close this chat session after your reply, add #close anywhere in your "
+            "reply text or subject line. Without it the session stays open."
+        )
+        msg.attach(MIMEText(body + footer, "plain"))
 
         if attachment_path and Path(attachment_path).exists():
             with open(attachment_path, "rb") as f:
@@ -149,12 +154,19 @@ class EmailGateway:
         body, close_requested = self._extract_body_and_marker(msg)
         self._reply_callback(chat_id, body, [], close_requested)
 
+    _CLOSE_MARKER = "#close"
+
     def _extract_body_and_marker(self, msg) -> tuple[str, bool]:
         raw = self._get_raw_text(msg)
         clean = self._strip_quoted_text(raw)
-        close_requested = "#סגור" in clean
+        subject = msg.get("Subject", "")
+
+        close_requested = (
+            self._CLOSE_MARKER in clean.lower()
+            or self._CLOSE_MARKER in subject.lower()
+        )
         if close_requested:
-            clean = re.sub(r"#סגור", "", clean).strip()
+            clean = re.sub(r"#close", "", clean, flags=re.IGNORECASE).strip()
         return clean, close_requested
 
     @staticmethod

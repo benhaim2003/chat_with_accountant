@@ -1,50 +1,104 @@
 from __future__ import annotations
-import email as email_lib
-import imaplib
+
+import base64
 import logging
 import re
-import smtplib
 import tempfile
 import threading
 import time
-import uuid
-from email.mime.application import MIMEApplication
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Callable, Optional
+
+import msal
+import requests
 
 _ATTACHMENT_DIR = Path(tempfile.gettempdir()) / "cpa_bot_uploads"
 _ATTACHMENT_DIR.mkdir(exist_ok=True)
 
 logger = logging.getLogger(__name__)
 
+GRAPH_BASE = "https://graph.microsoft.com/v1.0"
+# Attachments at or under this size are sent inline (base64) in one request.
+# Larger ones require a chunked upload session.
+_SMALL_ATTACHMENT_LIMIT = 3 * 1024 * 1024  # 3 MB
+# Upload-session chunks must be a multiple of 320 KiB (except the final chunk).
+_UPLOAD_CHUNK = 320 * 1024 * 10  # 3,276,800 bytes
+
 # Signature: (chat_id, reply_text, attachment_paths, close_requested) -> None
 ReplyCallback = Callable[[str, str, list[str], bool], None]
 
 
-class EmailGateway:
+class GraphEmailGateway:
+    """Email gateway backed by the Microsoft Graph API (app-only auth).
+
+    Drop-in replacement for the old SMTP/IMAP EmailGateway. The public surface
+    (send / set_reply_callback / start_polling / stop_polling) is unchanged, so
+    the rest of the bot does not need to change — with ONE semantic difference:
+    send() now returns Graph's conversationId (the thread handle) instead of an
+    RFC Message-ID.
+
+    Why Graph instead of SMTP/IMAP:
+      * Threading is native — replies stay in the same conversationId, so we map
+        conversationId -> chat_id and never parse In-Reply-To/References.
+      * Reply text comes from Graph's server-side `uniqueBody`, which already has
+        the quoted history stripped — no quote-regex heuristics.
+      * The `Prefer: outlook.body-content-type="text"` header makes bodies come
+        back as plain text, so there is no HTML-only-body failure mode.
+      * Attachments arrive as structured fileAttachment objects — no MIME walking.
+    """
+
+    _CLOSE_MARKER = "#close"
+
     def __init__(
         self,
-        smtp_host: str,
-        smtp_port: int,
-        imap_host: str,
-        imap_port: int,
-        username: str,
-        password: str,
+        tenant_id: str,
+        client_id: str,
+        client_secret: str,
+        mailbox: str,              # the mailbox we act as, e.g. "bot@example.com"
         secretariat_address: str,
     ) -> None:
-        self._smtp_host = smtp_host
-        self._smtp_port = smtp_port
-        self._imap_host = imap_host
-        self._imap_port = imap_port
-        self._username = username
-        self._password = password
+        self._mailbox = mailbox
         self._secretariat = secretariat_address
-        # message-id → chat_id, used to match secretary replies back to clients
+        self._msal = msal.ConfidentialClientApplication(
+            client_id,
+            authority=f"https://login.microsoftonline.com/{tenant_id}",
+            client_credential=client_secret,
+        )
+        # conversationId -> chat_id, used to match secretary replies back to clients.
+        # NOTE: in-memory only — lost on process restart. Swap for sqlite/redis if
+        # sessions must survive restarts (see the chat for a persistence sketch).
         self._thread_map: dict[str, str] = {}
         self._reply_callback: Optional[ReplyCallback] = None
         self._polling = False
+
+    # --------------------------------------------------------------- auth
+
+    def _token(self) -> str:
+        # MSAL caches the token in memory and auto-refreshes near expiry, so it is
+        # cheap and safe to call this before every request.
+        result = self._msal.acquire_token_for_client(
+            scopes=["https://graph.microsoft.com/.default"]
+        )
+        if "access_token" not in result:
+            raise RuntimeError(
+                f"Token acquisition failed: {result.get('error')} - "
+                f"{result.get('error_description')}"
+            )
+        return result["access_token"]
+
+    def _headers(self, extra: Optional[dict] = None) -> dict:
+        h = {
+            "Authorization": f"Bearer {self._token()}",
+            "Content-Type": "application/json",
+        }
+        if extra:
+            h.update(extra)
+        return h
+
+    def _url(self, suffix: str = "") -> str:
+        return f"{GRAPH_BASE}/users/{self._mailbox}{suffix}"
+
+    # --------------------------------------------------------------- public API
 
     def set_reply_callback(self, callback: ReplyCallback) -> None:
         self._reply_callback = callback
@@ -56,61 +110,113 @@ class EmailGateway:
         attachment_path: Optional[str] = None,
         chat_id: Optional[str] = None,
     ) -> Optional[str]:
-        message_id = f"<{uuid.uuid4()}@cpa-bot>"
-        msg = MIMEMultipart()
-        msg["From"] = self._username
-        msg["To"] = self._secretariat
-        msg["Subject"] = subject
-        msg["Message-ID"] = message_id
-        if chat_id:
-            msg["X-CPA-Chat-ID"] = chat_id
+        """Send a message to the secretariat.
+
+        Returns the Graph conversationId (the thread handle) on success, or
+        None on failure. Blocking network call — run from a worker thread, as
+        start_polling() does for the receive side.
+        """
         footer = (
             "\n\n---\n"
             "To close this chat session after your reply, add #close anywhere in your "
             "reply text or subject line. Without it the session stays open."
         )
-        msg.attach(MIMEText(body + footer, "plain"))
-
-        if attachment_path and Path(attachment_path).exists():
-            with open(attachment_path, "rb") as f:
-                part = MIMEApplication(f.read(), Name=Path(attachment_path).name)
-            part["Content-Disposition"] = f'attachment; filename="{Path(attachment_path).name}"'
-            msg.attach(part)
-
+        draft = {
+            "subject": subject,
+            "body": {"contentType": "text", "content": body + footer},
+            "toRecipients": [{"emailAddress": {"address": self._secretariat}}],
+        }
         try:
-            self._smtp_send(msg.as_string())
+            # 1) Create a draft first so we can capture conversationId before sending
+            #    (the sendMail action returns no body, so it can't give us the id).
+            r = requests.post(
+                self._url("/messages"), headers=self._headers(), json=draft, timeout=30
+            )
+            r.raise_for_status()
+            msg = r.json()
+            message_id = msg["id"]
+            conversation_id = msg["conversationId"]
+
+            # 2) Attach the file, if any.
+            if attachment_path and Path(attachment_path).exists():
+                self._attach_file(message_id, Path(attachment_path))
+
+            # 3) Send the draft.
+            r = requests.post(
+                self._url(f"/messages/{message_id}/send"),
+                headers=self._headers(), timeout=30,
+            )
+            r.raise_for_status()
+
             if chat_id:
-                self._thread_map[message_id] = chat_id
+                self._thread_map[conversation_id] = chat_id
             logger.info("Email sent: %s", subject)
-            return message_id
+            return conversation_id
         except Exception as exc:
             logger.error("Failed to send email: %s", exc)
             return None
 
-    def _smtp_send(self, raw: str) -> None:
-        # Port 465 = implicit SSL (Yahoo, some others).
-        # Any other port = explicit STARTTLS (Gmail 587, Yahoo 587, etc.).
-        if self._smtp_port == 465:
-            with smtplib.SMTP_SSL(self._smtp_host, self._smtp_port) as server:
-                server.login(self._username, self._password)
-                server.sendmail(self._username, self._secretariat, raw)
-        else:
-            with smtplib.SMTP(self._smtp_host, self._smtp_port) as server:
-                server.ehlo()
-                server.starttls()
-                server.ehlo()
-                server.login(self._username, self._password)
-                server.sendmail(self._username, self._secretariat, raw)
+    # --------------------------------------------------------------- attachments (send)
 
-    # ---------------------------------------------------------------- polling
+    def _attach_file(self, message_id: str, path: Path) -> None:
+        size = path.stat().st_size
+        if size <= _SMALL_ATTACHMENT_LIMIT:
+            payload = {
+                "@odata.type": "#microsoft.graph.fileAttachment",
+                "name": path.name,
+                "contentBytes": base64.b64encode(path.read_bytes()).decode(),
+            }
+            r = requests.post(
+                self._url(f"/messages/{message_id}/attachments"),
+                headers=self._headers(), json=payload, timeout=60,
+            )
+            r.raise_for_status()
+        else:
+            self._attach_large_file(message_id, path, size)
+
+    def _attach_large_file(self, message_id: str, path: Path, size: int) -> None:
+        session_payload = {
+            "AttachmentItem": {
+                "attachmentType": "file",
+                "name": path.name,
+                "size": size,
+            }
+        }
+        r = requests.post(
+            self._url(f"/messages/{message_id}/attachments/createUploadSession"),
+            headers=self._headers(), json=session_payload, timeout=30,
+        )
+        r.raise_for_status()
+        upload_url = r.json()["uploadUrl"]
+
+        with open(path, "rb") as f:
+            start = 0
+            while start < size:
+                chunk = f.read(_UPLOAD_CHUNK)
+                end = start + len(chunk) - 1
+                # The upload URL is pre-authorized — do NOT attach the bearer token.
+                resp = requests.put(
+                    upload_url,
+                    headers={
+                        "Content-Length": str(len(chunk)),
+                        "Content-Range": f"bytes {start}-{end}/{size}",
+                    },
+                    data=chunk, timeout=120,
+                )
+                if resp.status_code not in (200, 201, 202):
+                    resp.raise_for_status()
+                start = end + 1
+
+    # --------------------------------------------------------------- polling
 
     def start_polling(self, interval_seconds: int = 30) -> None:
         self._polling = True
         t = threading.Thread(
-            target=self._poll_loop, args=(interval_seconds,), daemon=True, name="email-poller"
+            target=self._poll_loop, args=(interval_seconds,),
+            daemon=True, name="graph-email-poller",
         )
         t.start()
-        logger.info("Email poller started (every %ds)", interval_seconds)
+        logger.info("Graph email poller started (every %ds)", interval_seconds)
 
     def stop_polling(self) -> None:
         self._polling = False
@@ -124,109 +230,93 @@ class EmailGateway:
             time.sleep(interval)
 
     def _check_inbox(self) -> None:
-        with imaplib.IMAP4_SSL(self._imap_host, self._imap_port) as imap:
-            imap.login(self._username, self._password)
-            imap.select("INBOX")
-            _, data = imap.search(None, "UNSEEN")
-            uids = data[0].split()
-            if uids:
-                logger.debug("Checking %d unseen email(s)", len(uids))
-            for uid in uids:
-                _, msg_data = imap.fetch(uid, "(RFC822)")
-                raw = msg_data[0][1]
-                msg = email_lib.message_from_bytes(raw)
+        params = {
+            "$filter": "isRead eq false",
+            "$select": "id,conversationId,subject,uniqueBody,from",
+            "$expand": "attachments",
+            "$orderby": "receivedDateTime asc",
+            "$top": "25",
+        }
+        # Prefer header => body/uniqueBody returned as plain text (no HTML parsing).
+        headers = self._headers({"Prefer": 'outlook.body-content-type="text"'})
+        r = requests.get(
+            self._url("/mailFolders/inbox/messages"),
+            headers=headers, params=params, timeout=30,
+        )
+        r.raise_for_status()
+        messages = r.json().get("value", [])
+        if messages:
+            logger.debug("Checking %d unread message(s)", len(messages))
+        for msg in messages:
+            msg_id = msg["id"]
+            try:
                 self._process_reply(msg)
-                imap.store(uid, "+FLAGS", "\\Seen")
+            except Exception as exc:
+                logger.error("Failed to process message %s: %s", msg_id, exc)
+            finally:
+                # Always mark read, even on failure, so one poison message can't
+                # wedge the poller into reprocessing it every cycle forever.
+                self._mark_read(msg_id)
 
-    def _process_reply(self, msg) -> None:
+    def _mark_read(self, message_id: str) -> None:
+        try:
+            requests.patch(
+                self._url(f"/messages/{message_id}"),
+                headers=self._headers(), json={"isRead": True}, timeout=30,
+            ).raise_for_status()
+        except Exception as exc:
+            logger.error("Failed to mark message read %s: %s", message_id, exc)
+
+    def _process_reply(self, msg: dict) -> None:
         if not self._reply_callback:
             return
-
-        # Only process genuine replies — emails that reference a bot-originated thread.
-        # This prevents the bot from treating its own outgoing emails as replies,
-        # which would happen when sender == secretariat address (e.g. during testing).
-        in_reply_to = msg.get("In-Reply-To", "").strip()
-        if not in_reply_to:
-            logger.debug("Skipping email: no In-Reply-To header")
-            return
-
-        chat_id = self._thread_map.get(in_reply_to)
+        conversation_id = msg.get("conversationId", "")
+        chat_id = self._thread_map.get(conversation_id)
         if not chat_id:
-            logger.debug("Skipping email: In-Reply-To not in thread map")
+            logger.debug("Skipping message: conversationId not in thread map")
             return
 
-        # Chain: store this reply's own Message-ID so that if the secretary
-        # replies again (e.g. sends #close as a follow-up), it is still matched.
-        reply_id = msg.get("Message-ID", "").strip()
-        if reply_id:
-            self._thread_map[reply_id] = chat_id
-
-        body, close_requested = self._extract_body_and_marker(msg)
-        attachments = self._extract_attachments(msg)
+        raw_text = (msg.get("uniqueBody") or {}).get("content", "")
+        subject = msg.get("subject", "")
+        body, close_requested = self._extract_body_and_marker(raw_text, subject)
+        attachments = self._save_attachments(msg)
         self._reply_callback(chat_id, body, attachments, close_requested)
 
-    _CLOSE_MARKER = "#close"
-
-    def _extract_body_and_marker(self, msg) -> tuple[str, bool]:
-        raw = self._get_raw_text(msg)
-        clean = self._strip_quoted_text(raw)
-        subject = msg.get("Subject", "")
-
+    def _extract_body_and_marker(self, text: str, subject: str) -> tuple[str, bool]:
+        clean = (text or "").strip()
         close_requested = (
             self._CLOSE_MARKER in clean.lower()
-            or self._CLOSE_MARKER in subject.lower()
+            or self._CLOSE_MARKER in (subject or "").lower()
         )
         if close_requested:
             clean = re.sub(r"#close", "", clean, flags=re.IGNORECASE).strip()
         return clean, close_requested
 
-    @staticmethod
-    def _extract_attachments(msg) -> list[str]:
-        saved = []
-        if not msg.is_multipart():
-            return saved
-        for part in msg.walk():
-            # Skip container and body parts
-            if part.get_content_maintype() == "multipart":
+    # --------------------------------------------------------------- attachments (receive)
+
+    def _save_attachments(self, msg: dict) -> list[str]:
+        saved: list[str] = []
+        for att in msg.get("attachments", []):
+            if att.get("@odata.type") != "#microsoft.graph.fileAttachment":
+                continue  # skip itemAttachment / referenceAttachment
+            # Sanitize: strip any directory components a crafted name might carry.
+            name = Path(att.get("name") or f"attachment_{att.get('id', '')}").name
+            content_b64 = att.get("contentBytes")
+            if content_b64 is None:
+                # $expand does not inline very large attachments — fetch separately.
+                content_b64 = self._fetch_attachment_bytes(msg["id"], att["id"])
+            if not content_b64:
                 continue
-            if part.get_content_type() in ("text/plain", "text/html"):
-                continue
-            # Accept if explicitly marked as attachment OR if it carries a filename.
-            # Some clients (Gmail, Yahoo) send docx/xlsx as Content-Disposition: inline
-            # or omit the header entirely — checking for a filename catches those cases.
-            disposition = part.get("Content-Disposition", "")
-            filename = part.get_filename()
-            if "attachment" not in disposition and not filename:
-                continue
-            filename = filename or f"attachment_{uuid.uuid4()}"
-            data = part.get_payload(decode=True)
-            if data:
-                dest = _ATTACHMENT_DIR / filename
-                dest.write_bytes(data)
-                saved.append(str(dest))
-                logger.debug("Saved secretary attachment: %s", dest)
+            dest = _ATTACHMENT_DIR / name
+            dest.write_bytes(base64.b64decode(content_b64))
+            saved.append(str(dest))
+            logger.debug("Saved secretary attachment: %s", dest)
         return saved
 
-    @staticmethod
-    def _get_raw_text(msg) -> str:
-        if msg.is_multipart():
-            for part in msg.walk():
-                if part.get_content_type() == "text/plain":
-                    payload = part.get_payload(decode=True)
-                    return payload.decode(errors="replace") if payload else ""
-        payload = msg.get_payload(decode=True)
-        return payload.decode(errors="replace") if payload else ""
-
-    @staticmethod
-    def _strip_quoted_text(body: str) -> str:
-        # Pattern 1 — Gmail / Yahoo / Apple Mail: "On <date>, <name> wrote:" (single or multi-line)
-        match = re.search(r"\nOn\s.{5,300}wrote:\s*\n", body, re.DOTALL)
-        if match:
-            return body[: match.start()].strip()
-        # Pattern 2 — Outlook: "From: ... Sent: ... To: ... Subject: ..."
-        match = re.search(r"\n[-_]{3,}\s*\n.*?From:.*?Sent:", body, re.DOTALL)
-        if match:
-            return body[: match.start()].strip()
-        # Pattern 3 — standard > quote markers
-        lines = [line for line in body.splitlines() if not line.startswith(">")]
-        return "\n".join(lines).strip()
+    def _fetch_attachment_bytes(self, message_id: str, attachment_id: str) -> Optional[str]:
+        r = requests.get(
+            self._url(f"/messages/{message_id}/attachments/{attachment_id}"),
+            headers=self._headers(), timeout=60,
+        )
+        r.raise_for_status()
+        return r.json().get("contentBytes")

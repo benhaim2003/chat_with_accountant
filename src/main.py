@@ -12,18 +12,16 @@ logger = logging.getLogger(__name__)
 from src.adapters.telegram_adapter import TelegramAdapter
 from src.core.menu_handler import MenuHandler
 from src.core.message_router import MessageRouter
-from src.services.email_gateway import EmailGateway
+from src.services.email_gateway import GraphEmailGateway
 from src.services.file_handler import FileHandler
 
 
-def _build_email_gateway() -> EmailGateway:
-    return EmailGateway(
-        smtp_host=os.environ.get("SMTP_HOST", ""),
-        smtp_port=int(os.environ.get("SMTP_PORT", "587")),
-        imap_host=os.environ.get("IMAP_HOST", ""),
-        imap_port=int(os.environ.get("IMAP_PORT", "993")),
-        username=os.environ.get("EMAIL_USERNAME", ""),
-        password=os.environ.get("EMAIL_PASSWORD", ""),
+def _build_email_gateway() -> GraphEmailGateway:
+    return GraphEmailGateway(
+        tenant_id=os.environ.get("AZURE_TENANT_ID", ""),
+        client_id=os.environ.get("AZURE_CLIENT_ID", ""),
+        client_secret=os.environ.get("AZURE_CLIENT_SECRET", ""),
+        mailbox=os.environ.get("EMAIL_USERNAME", ""),
         secretariat_address=os.environ.get("SECRETARIAT_EMAIL", ""),
     )
 

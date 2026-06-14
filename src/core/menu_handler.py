@@ -2,7 +2,7 @@ from __future__ import annotations
 import logging
 from src.models.internal_message import InternalMessage, MessageType
 from src.core import session_manager
-from src.services.email_gateway import EmailGateway
+from src.services.email_gateway import GraphEmailGateway
 from src.services.file_handler import FileHandler
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ _STATE_HANDLERS = {
 
 
 class MenuHandler:
-    def __init__(self, email_gateway: EmailGateway, file_handler: FileHandler) -> None:
+    def __init__(self, email_gateway: GraphEmailGateway, file_handler: FileHandler) -> None:
         self._email = email_gateway
         self._files = file_handler
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 import asyncio
 import logging
+import time
 
+import telegram
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -46,8 +48,18 @@ class TelegramAdapter(PlatformAdapter):
         asyncio.run(_send())
 
     def start(self) -> None:
-        logger.info("Telegram adapter started — polling for updates")
-        self._app.run_polling(drop_pending_updates=True)
+        max_retries = 10
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.info("Telegram adapter started — polling for updates")
+                self._app.run_polling(drop_pending_updates=True)
+                return
+            except telegram.error.Conflict:
+                if attempt == max_retries:
+                    raise
+                wait = attempt * 3
+                logger.warning("Conflict: previous instance still running. Retrying in %ds (attempt %d/%d)...", wait, attempt, max_retries)
+                time.sleep(wait)
 
     # --------------------------------------------------------------- handlers
 

@@ -59,15 +59,13 @@ class MenuHandler:
         logger.warning("Unknown state '%s' for %s — resetting", session.state, message.chat_id)
         return self._show_menu(message)
 
-    # ------------------------------------------------------------------ menu
-
-    def _show_menu(self, message: InternalMessage) -> str:
+    @staticmethod
+    def _show_menu(message: InternalMessage) -> str:
         session_manager.set_state(message.chat_id, "awaiting_option", message.platform)
         return _MENU_TEXT
 
-    # ---------------------------------------------------------- option router
-
-    def _route_option(self, message: InternalMessage) -> str:
+    @staticmethod
+    def _route_option(message: InternalMessage) -> str:
         choice = (message.text or "").strip().upper()
 
         if choice in _OPTION_A:
@@ -90,8 +88,6 @@ class MenuHandler:
 
         return f"אנא ענה/י עם א, ב, ג, או ד.\n\n{_MENU_TEXT}"
 
-    # ---------------------------------------------------- option א: upload
-    # Logical end = client finishes uploading → ask close/keep immediately.
 
     def _handle_upload(self, message: InternalMessage) -> str:
         if message.message_type not in (MessageType.DOCUMENT, MessageType.PHOTO):
@@ -174,25 +170,19 @@ class MenuHandler:
         )
         return "תודה! הודעתך התקבלה. ניתן לשלוח הודעות נוספות בכל עת."
 
-    # ------------------------------------------- session close/keep decision
-    # Triggered after secretary sends a reply (via email callback in main.py)
-    # or after option א completes.
-    # Only 1/2 (or matching keywords) are accepted; anything else re-asks.
-
     def _handle_session_decision(self, message: InternalMessage) -> str:
         text = (message.text or "").strip()
 
         if text in _CLOSE_KEYWORDS:
             session_manager.set_state(message.chat_id, "idle", message.platform)
-            return "הסשן נסגר. בכל פעם שתזדקק/י לעזרה, פשוט שלח/י הודעה ונציג לך את התפריט."
+            return "השיחה הסתיימה. בכל פעם שתזדקק/י לעזרה, פשוט שלח/י הודעה ונציג לך את התפריט :)"
 
         if text in _KEEP_KEYWORDS:
             session_manager.set_state(message.chat_id, "session_open", message.platform)
-            return "מצוין! שלח/י את ההודעה הבאה שלך והיא תועבר למשרד."
+            return self._show_menu(message)
 
         return f"אנא ענה/י 1 (לסגירה) או 2 (להמשך).\n\n{_SESSION_DECISION_TEXT}"
 
-    # ----------------------------------------- open session: free-form relay
 
     def _handle_session_open(self, message: InternalMessage) -> str:
         session = session_manager.get_session(message.chat_id, message.platform)
@@ -215,6 +205,5 @@ class MenuHandler:
             body = f"המשך מלקוח/ה (מזהה צ'אט: {message.chat_id}):\n\n{message.text}"
             self._email.send(subject=subject, body=body, chat_id=message.chat_id)
 
-        # Stay open — close/keep will be triggered when the secretary replies
         session_manager.set_state(message.chat_id, "session_open", message.platform)
         return "✓ נשלח"

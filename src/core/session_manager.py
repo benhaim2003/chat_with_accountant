@@ -4,8 +4,6 @@ from src.models.user_model import UserSession
 
 logger = logging.getLogger(__name__)
 
-# In-memory store: "{platform}:{chat_id}" → UserSession
-# Swappable for Redis/DB in MVP without changing the interface.
 _sessions: dict[str, UserSession] = {}
 
 

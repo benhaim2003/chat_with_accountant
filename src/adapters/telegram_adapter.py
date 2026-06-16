@@ -27,9 +27,6 @@ class TelegramAdapter(PlatformAdapter):
         self._files = file_handler
         self._loop: asyncio.AbstractEventLoop | None = None
 
-        # Capture the running event loop so background threads can schedule
-        # coroutines on it via run_coroutine_threadsafe (avoids corrupting the
-        # shared httpx connection pool that asyncio.run() would cause).
         async def _post_init(app) -> None:
             self._loop = asyncio.get_running_loop()
 
@@ -55,6 +52,7 @@ class TelegramAdapter(PlatformAdapter):
                 await self._app.bot.send_document(
                     chat_id=int(chat_id), document=f, caption=caption
                 )
+
         asyncio.run_coroutine_threadsafe(_send(), self._loop).result(timeout=60)
 
     def start(self) -> None:
@@ -68,7 +66,8 @@ class TelegramAdapter(PlatformAdapter):
                 if attempt == max_retries:
                     raise
                 wait = attempt * 3
-                logger.warning("Conflict: previous instance still running. Retrying in %ds (attempt %d/%d)...", wait, attempt, max_retries)
+                logger.warning("Conflict: previous instance still running. Retrying in %ds (attempt %d/%d)...", wait,
+                               attempt, max_retries)
                 time.sleep(wait)
 
     # --------------------------------------------------------------- handlers
@@ -92,7 +91,7 @@ class TelegramAdapter(PlatformAdapter):
         await update.message.reply_text(self._router.route(msg))
 
     async def _on_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        photo = update.message.photo[-1]          # largest available size
+        photo = update.message.photo[-1]  # largest available size
         tg_file = await photo.get_file()
         data = bytes(await tg_file.download_as_bytearray())
         filename = f"{photo.file_id}.jpg"
@@ -108,12 +107,12 @@ class TelegramAdapter(PlatformAdapter):
         return self._build_message(update, MessageType.TEXT, text=text)
 
     def _build_message(
-        self,
-        update: Update,
-        message_type: MessageType,
-        text: str | None = None,
-        file_path: str | None = None,
-        file_name: str | None = None,
+            self,
+            update: Update,
+            message_type: MessageType,
+            text: str | None = None,
+            file_path: str | None = None,
+            file_name: str | None = None,
     ) -> InternalMessage:
         return InternalMessage(
             platform=Platform.TELEGRAM,

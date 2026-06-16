@@ -29,32 +29,13 @@ ReplyCallback = Callable[[str, str, list[str], bool], None]
 
 
 class GraphEmailGateway:
-    """Email gateway backed by the Microsoft Graph API (app-only auth).
-
-    Drop-in replacement for the old SMTP/IMAP EmailGateway. The public surface
-    (send / set_reply_callback / start_polling / stop_polling) is unchanged, so
-    the rest of the bot does not need to change — with ONE semantic difference:
-    send() now returns Graph's conversationId (the thread handle) instead of an
-    RFC Message-ID.
-
-    Why Graph instead of SMTP/IMAP:
-      * Threading is native — replies stay in the same conversationId, so we map
-        conversationId -> chat_id and never parse In-Reply-To/References.
-      * Reply text comes from Graph's server-side `uniqueBody`, which already has
-        the quoted history stripped — no quote-regex heuristics.
-      * The `Prefer: outlook.body-content-type="text"` header makes bodies come
-        back as plain text, so there is no HTML-only-body failure mode.
-      * Attachments arrive as structured fileAttachment objects — no MIME walking.
-    """
-
     _CLOSE_MARKER = "#close"
-
     def __init__(
         self,
         tenant_id: str,
         client_id: str,
         client_secret: str,
-        mailbox: str,              # the mailbox we act as, e.g. "bot@example.com"
+        mailbox: str,
         secretariat_address: str,
     ) -> None:
         self._mailbox = mailbox
@@ -118,8 +99,7 @@ class GraphEmailGateway:
         """
         footer = (
             "\n\n---\n"
-            "To close this chat session after your reply, add #close anywhere in your "
-            "reply text or subject line. Without it the session stays open."
+            '* אם ברצונך לסיים שיחה זו הוסיפי: "#close" להודעה'
         )
         draft = {
             "subject": subject,

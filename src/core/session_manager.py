@@ -10,8 +10,9 @@ logger = logging.getLogger(__name__)
 _SESSION_TTL = 86_400  # 24 h — reset on every write
 
 
-def _key(chat_id: str, platform: str) -> str:
-    return f"session:{platform}:{chat_id}"
+def _key(chat_id: str, platform) -> str:
+    p = platform.value if hasattr(platform, "value") else platform
+    return f"session:{p}:{chat_id}"
 
 
 def get_session(chat_id: str, platform: str = "telegram") -> UserSession:

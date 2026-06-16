@@ -276,14 +276,24 @@ class GraphEmailGateway:
             logger.debug("Skipping message: conversationId not in thread map")
             return
 
-        raw_text = (msg.get("uniqueBody") or {}).get("content", "")
+        unique_body = msg.get("uniqueBody") or {}
+        raw_text = unique_body.get("content", "")
+        body_type = unique_body.get("contentType", "unknown")
+        logger.info("RAW uniqueBody contentType=%s len=%d content=%r", body_type, len(raw_text), raw_text[:500])
         subject = msg.get("subject", "")
         body, close_requested = self._extract_body_and_marker(raw_text, subject)
+        logger.info("AFTER STRIP len=%d content=%r close=%s", len(body), body[:200], close_requested)
         attachments = self._save_attachments(msg)
         self._reply_callback(chat_id, body, attachments, close_requested)
 
+    _FOOTER_SEPARATOR = "---\nTo close this chat session"
+
     def _extract_body_and_marker(self, text: str, subject: str) -> tuple[str, bool]:
         clean = (text or "").strip()
+        clean = clean.replace("\r\n", "\n")
+        clean = self._strip_our_footer(clean)
+        clean = self._strip_quoted_text(clean)
+
         close_requested = (
             self._CLOSE_MARKER in clean.lower()
             or self._CLOSE_MARKER in (subject or "").lower()
@@ -292,7 +302,26 @@ class GraphEmailGateway:
             clean = re.sub(r"#close", "", clean, flags=re.IGNORECASE).strip()
         return clean, close_requested
 
-    # --------------------------------------------------------------- attachments (receive)
+    def _strip_our_footer(self, body: str) -> str:
+        idx = body.find(self._FOOTER_SEPARATOR)
+        if idx != -1:
+            return body[:idx].strip()
+        return body
+
+    @staticmethod
+    def _strip_quoted_text(body: str) -> str:
+        match = re.search(r"\nOn\s.{5,300}wrote:\s*\n", body, re.DOTALL)
+        if match:
+            return body[: match.start()].strip()
+        match = re.search(r"\n[‎‏‪-‮⁦-⁩]*בתאריך\s", body)
+        if match:
+            return body[: match.start()].strip()
+        match = re.search(r"\n[-_]{3,}\s*\n.*?From:.*?Sent:", body, re.DOTALL)
+        if match:
+            return body[: match.start()].strip()
+        lines = [line for line in body.splitlines() if not line.startswith(">")]
+        return "\n".join(lines).strip()
+
 
     def _save_attachments(self, msg: dict) -> list[str]:
         saved: list[str] = []

@@ -25,7 +25,15 @@ class TelegramAdapter(PlatformAdapter):
     def __init__(self, token: str, router: MessageRouter, file_handler: FileHandler) -> None:
         self._router = router
         self._files = file_handler
-        self._app = ApplicationBuilder().token(token).build()
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+        # Capture the running event loop so background threads can schedule
+        # coroutines on it via run_coroutine_threadsafe (avoids corrupting the
+        # shared httpx connection pool that asyncio.run() would cause).
+        async def _post_init(app) -> None:
+            self._loop = asyncio.get_running_loop()
+
+        self._app = ApplicationBuilder().token(token).post_init(_post_init).build()
         self._app.add_handler(CommandHandler("start", self._on_start))
         self._app.add_handler(CommandHandler("menu", self._on_start))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_text))
@@ -35,9 +43,11 @@ class TelegramAdapter(PlatformAdapter):
     # ---------------------------------------------------------------- public
 
     def send_text(self, chat_id: str, text: str) -> None:
-        # Called from background threads (e.g. email poller).
-        # asyncio.run() is safe here because background threads have no running event loop.
-        asyncio.run(self._app.bot.send_message(chat_id=int(chat_id), text=text))
+        future = asyncio.run_coroutine_threadsafe(
+            self._app.bot.send_message(chat_id=int(chat_id), text=text),
+            self._loop,
+        )
+        future.result(timeout=30)
 
     def send_file(self, chat_id: str, file_path: str, caption: str = "") -> None:
         async def _send():
@@ -45,7 +55,7 @@ class TelegramAdapter(PlatformAdapter):
                 await self._app.bot.send_document(
                     chat_id=int(chat_id), document=f, caption=caption
                 )
-        asyncio.run(_send())
+        asyncio.run_coroutine_threadsafe(_send(), self._loop).result(timeout=60)
 
     def start(self) -> None:
         max_retries = 10

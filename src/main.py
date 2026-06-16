@@ -46,7 +46,8 @@ def main() -> None:
         logger.info("Forwarding secretary reply to chat %s (close_requested=%s)", chat_id, close_requested)
 
         if close_requested:
-            adapter.send_text(chat_id, f"הודעה ממשרד רואה החשבון שלך:\n\n{text}\n\n{_SESSION_DECISION_TEXT}")
+            body = f"הודעה ממשרד רואה החשבון שלך:\n\n{text}\n\n{_SESSION_DECISION_TEXT}" if text else _SESSION_DECISION_TEXT
+            adapter.send_text(chat_id, body)
         else:
             adapter.send_text(chat_id, f"הודעה ממשרד רואה החשבון שלך:\n\n{text}")
 

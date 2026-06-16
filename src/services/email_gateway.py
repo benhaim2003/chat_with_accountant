@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import html
 import logging
 import re
 import tempfile
@@ -95,13 +96,9 @@ class GraphEmailGateway:
         None on failure. Blocking network call — run from a worker thread, as
         start_polling() does for the receive side.
         """
-        footer = (
-            "\n\n---\n"
-            '* אם ברצונך לסיים שיחה זו הוסיפי: "#close" להודעה'
-        )
         draft = {
             "subject": subject,
-            "body": {"contentType": "text", "content": body + footer},
+            "body": {"contentType": "html", "content": self._build_rtl_html(body)},
             "toRecipients": [{"emailAddress": {"address": self._secretariat}}],
         }
         try:
@@ -264,7 +261,20 @@ class GraphEmailGateway:
         attachments = self._save_attachments(msg)
         self._reply_callback(chat_id, body, attachments, close_requested)
 
-    _FOOTER_SEPARATOR = "---\nTo close this chat session"
+    _FOOTER_SEPARATOR = '* אם ברצונך לסיים שיחה זו הוסיפי: "#close" להודעה'
+
+    @staticmethod
+    def _build_rtl_html(body: str) -> str:
+        lines = html.escape(body).replace("\n", "<br>")
+        footer_html = html.escape('* אם ברצונך לסיים שיחה זו הוסיפי: "#close" להודעה')
+        return (
+            '<html><body dir="rtl" lang="he" '
+            'style="direction:rtl;text-align:right;font-family:Arial,sans-serif;">'
+            f"<p>{lines}</p>"
+            '<hr style="border:none;border-top:1px solid #ccc;margin:16px 0;">'
+            f'<p style="color:#888;font-size:0.85em;">{footer_html}</p>'
+            "</body></html>"
+        )
 
     def _extract_body_and_marker(self, text: str, subject: str) -> tuple[str, bool]:
         clean = (text or "").strip()

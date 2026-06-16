@@ -12,6 +12,8 @@ from typing import Callable, Optional
 import msal
 import requests
 
+from src.infrastructure.redis_client import get_redis
+
 _ATTACHMENT_DIR = Path(tempfile.gettempdir()) / "cpa_bot_uploads"
 _ATTACHMENT_DIR.mkdir(exist_ok=True)
 
@@ -45,10 +47,6 @@ class GraphEmailGateway:
             authority=f"https://login.microsoftonline.com/{tenant_id}",
             client_credential=client_secret,
         )
-        # conversationId -> chat_id, used to match secretary replies back to clients.
-        # NOTE: in-memory only — lost on process restart. Swap for sqlite/redis if
-        # sessions must survive restarts (see the chat for a persistence sketch).
-        self._thread_map: dict[str, str] = {}
         self._reply_callback: Optional[ReplyCallback] = None
         self._polling = False
 
@@ -129,7 +127,7 @@ class GraphEmailGateway:
             r.raise_for_status()
 
             if chat_id:
-                self._thread_map[conversation_id] = chat_id
+                get_redis().set(f"thread:{conversation_id}", chat_id, ex=604_800)  # 7 days
             logger.info("Email sent: %s", subject)
             return conversation_id
         except Exception as exc:
@@ -251,7 +249,7 @@ class GraphEmailGateway:
         if not self._reply_callback:
             return
         conversation_id = msg.get("conversationId", "")
-        chat_id = self._thread_map.get(conversation_id)
+        chat_id = get_redis().get(f"thread:{conversation_id}")
         if not chat_id:
             logger.debug("Skipping message: conversationId not in thread map")
             return

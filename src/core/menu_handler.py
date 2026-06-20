@@ -103,6 +103,7 @@ class MenuHandler:
             body=body,
             attachment_path=message.file_path,
             chat_id=message.chat_id,
+            platform=message.platform.value,
         )
         session_manager.set_state(
             message.chat_id, "awaiting_session_decision", message.platform,
@@ -124,7 +125,7 @@ class MenuHandler:
             f"לקוח/ה (מזהה צ'אט: {message.chat_id}) מבקש/ת קובץ.\n\n"
             f"בקשה: {message.text}"
         )
-        thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id)
+        thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id, platform=message.platform.value)
         session_manager.set_state(
             message.chat_id, "session_open", message.platform,
             active_thread_id=thread_id,
@@ -143,7 +144,7 @@ class MenuHandler:
             f"לקוח/ה (מזהה צ'אט: {message.chat_id}) השאיר/ה הודעה:\n\n"
             f"{message.text}"
         )
-        thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id)
+        thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id, platform=message.platform.value)
         session_manager.set_state(
             message.chat_id, "session_open", message.platform,
             active_thread_id=thread_id,
@@ -161,7 +162,7 @@ class MenuHandler:
             f"{message.text}"
         )
         # Phase 3 hook: replace email send with LLM processing here
-        thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id)
+        thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id, platform=message.platform.value)
         session_manager.set_state(
             message.chat_id, "session_open", message.platform,
             active_thread_id=thread_id,
@@ -200,10 +201,11 @@ class MenuHandler:
                 body=body,
                 attachment_path=message.file_path,
                 chat_id=message.chat_id,
+                platform=message.platform.value,
             )
         else:
             body = f"המשך מלקוח/ה (מזהה צ'אט: {message.chat_id}):\n\n{message.text}"
-            self._email.send(subject=subject, body=body, chat_id=message.chat_id)
+            self._email.send(subject=subject, body=body, chat_id=message.chat_id, platform=message.platform.value)
 
         session_manager.set_state(message.chat_id, "session_open", message.platform)
         return "✓ נשלח"

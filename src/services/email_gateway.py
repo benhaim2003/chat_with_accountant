@@ -27,8 +27,8 @@ _SMALL_ATTACHMENT_LIMIT = 3 * 1024 * 1024  # 3 MB
 # Upload-session chunks must be a multiple of 320 KiB (except the final chunk).
 _UPLOAD_CHUNK = 320 * 1024 * 10  # 3,276,800 bytes
 
-# Signature: (chat_id, reply_text, attachment_paths, close_requested) -> None
-ReplyCallback = Callable[[str, str, list[str], bool], None]
+# Signature: (platform, chat_id, reply_text, attachment_paths, close_requested) -> None
+ReplyCallback = Callable[[str, str, str, list[str], bool], None]
 
 
 class GraphEmailGateway:
@@ -89,6 +89,7 @@ class GraphEmailGateway:
         body: str,
         attachment_path: Optional[str] = None,
         chat_id: Optional[str] = None,
+        platform: str = "telegram",
     ) -> Optional[str]:
         """Send a message to the secretariat.
 
@@ -124,7 +125,7 @@ class GraphEmailGateway:
             r.raise_for_status()
 
             if chat_id:
-                get_redis().set(f"thread:{conversation_id}", chat_id, ex=604_800)  # 7 days
+                get_redis().set(f"thread:{conversation_id}", f"{platform}:{chat_id}", ex=604_800)  # 7 days
             logger.info("Email sent: %s", subject)
             return conversation_id
         except Exception as exc:
@@ -246,10 +247,13 @@ class GraphEmailGateway:
         if not self._reply_callback:
             return
         conversation_id = msg.get("conversationId", "")
-        chat_id = get_redis().get(f"thread:{conversation_id}")
-        if not chat_id:
+        raw = get_redis().get(f"thread:{conversation_id}")
+        if not raw:
             logger.debug("Skipping message: conversationId not in thread map")
             return
+        platform, _, chat_id = raw.partition(":")
+        if not chat_id:  # legacy value without platform prefix
+            platform, chat_id = "telegram", raw
 
         unique_body = msg.get("uniqueBody") or {}
         raw_text = unique_body.get("content", "")
@@ -259,7 +263,7 @@ class GraphEmailGateway:
         body, close_requested = self._extract_body_and_marker(raw_text, subject)
         logger.info("AFTER STRIP len=%d content=%r close=%s", len(body), body[:200], close_requested)
         attachments = self._save_attachments(msg)
-        self._reply_callback(chat_id, body, attachments, close_requested)
+        self._reply_callback(platform, chat_id, body, attachments, close_requested)
 
     _FOOTER_SEPARATOR = '* אם ברצונך לסיים שיחה זו הוסיפי: "#close" להודעה'
 

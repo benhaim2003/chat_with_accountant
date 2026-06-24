@@ -3,11 +3,10 @@ from __future__ import annotations
 import logging
 import threading
 from pathlib import Path
-from typing import Optional
 
 import requests
 import uvicorn
-from fastapi import FastAPI, Query, Request, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import PlainTextResponse
 
 from src.adapters.base import PlatformAdapter
@@ -67,11 +66,11 @@ class WhatsAppAdapter(PlatformAdapter):
         adapter = self  # capture for closures
 
         @app.get("/webhook/whatsapp")
-        def verify(
-            mode: Optional[str] = Query(default=None, alias="hub.mode"),
-            token: Optional[str] = Query(default=None, alias="hub.verify_token"),
-            challenge: Optional[str] = Query(default=None, alias="hub.challenge"),
-        ):
+        async def verify(request: Request):
+            params = dict(request.query_params)
+            mode = params.get("hub.mode")
+            token = params.get("hub.verify_token")
+            challenge = params.get("hub.challenge")
             if mode == "subscribe" and token == adapter._verify_token:
                 return PlainTextResponse(challenge)
             return Response(status_code=403)

@@ -1,4 +1,24 @@
 # Project Context: Chat with Accountant
+> ⚠️ **This repository is PUBLIC on GitHub.** Anything committed — including past commits — is visible to anyone.                                                                                                              
+     >                                                                                                                                                                                                                              
+     > **Never commit personal data:**                                                                                                                                                                                              
+     > - Client names (real Hebrew or transliterated)                                                                                                                                                                               
+     > - Client phone numbers (any format — `+972…`, `972…`, Telegram chat IDs)                                                                                                                                                     
+     > - Real email addresses (CPA office mailboxes, secretary inboxes, client emails)
+>                                                                                                                                                                                                                              
+     > **Never commit credentials:**                                                                                                                                                                                                
+     > - Telegram bot tokens, WhatsApp access tokens, Azure client secrets, ACR passwords, webhook verify tokens                                                                                                                    
+     > - Any API key, password, or bearer token                                                                                                                                                                                     
+     >                                                                                                                                                                                                                              
+     > **Never commit operational identifiers:**                                                                                                                                                                                    
+     > - Azure subscription / tenant / resource group IDs that aren't already in HEAD                                                                                                                                               
+     > - Container App public FQDN (it's discoverable but we keep it out of source)                                                                                                                                                 
+     >                                                                                                                                                                                                                              
+     > All of the above must live in `.env` (gitignored) and be passed to the container via secrets in `deploy.ps1`. Two specific contracts in this repo:                                                                           
+     > - **Pilot client names** → `PILOT_CLIENTS_JSON` (raw JSON) for local dev / `PILOT_CLIENTS_JSON_B64` (base64) injected by `deploy.ps1` in production. See `src/repositories/pilot_clients.py`.                                
+     > - **Azure subscription** → `AZURE_SUBSCRIPTION_ID` in `.env`, read by `deploy.ps1`. Never hardcode in YAML.                                                                                                                  
+     >                                                                                                                                                                                                                              
+     > History was scrubbed once via `git filter-repo` on 2026-06-25. Keep it clean — a second rewrite is destructive and breaks every clone/fork.
 
 ## 1. Project Overview
 "Chat with Accountant" is an automated messaging and file-handling system designed for a Certified Public Accountant (CPA) office — **רבינוביץ אבן ממן**. The ultimate goal of the project is to:

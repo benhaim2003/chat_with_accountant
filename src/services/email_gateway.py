@@ -27,12 +27,11 @@ _SMALL_ATTACHMENT_LIMIT = 3 * 1024 * 1024  # 3 MB
 # Upload-session chunks must be a multiple of 320 KiB (except the final chunk).
 _UPLOAD_CHUNK = 320 * 1024 * 10  # 3,276,800 bytes
 
-# Signature: (platform, chat_id, reply_text, attachment_paths, close_requested) -> None
-ReplyCallback = Callable[[str, str, str, list[str], bool], None]
+# Signature: (platform, chat_id, reply_text, attachment_paths) -> None
+ReplyCallback = Callable[[str, str, str, list[str]], None]
 
 
 class GraphEmailGateway:
-    _CLOSE_MARKER = "#close"
     def __init__(
         self,
         tenant_id: str,
@@ -253,46 +252,24 @@ class GraphEmailGateway:
         raw_text = unique_body.get("content", "")
         body_type = unique_body.get("contentType", "unknown")
         logger.info("RAW uniqueBody contentType=%s len=%d content=%r", body_type, len(raw_text), raw_text[:500])
-        subject = msg.get("subject", "")
-        body, close_requested = self._extract_body_and_marker(raw_text, subject)
-        logger.info("AFTER STRIP len=%d content=%r close=%s", len(body), body[:200], close_requested)
+        body = self._extract_body(raw_text)
+        logger.info("AFTER STRIP len=%d content=%r", len(body), body[:200])
         attachments = self._save_attachments(msg)
-        self._reply_callback(platform, chat_id, body, attachments, close_requested)
-
-    _FOOTER_SEPARATOR = '* אם ברצונך לסיים שיחה זו הוסיפי: "#close" להודעה'
+        self._reply_callback(platform, chat_id, body, attachments)
 
     @staticmethod
     def _build_rtl_html(body: str) -> str:
         lines = html.escape(body).replace("\n", "<br>")
-        footer_html = html.escape('* אם ברצונך לסיים שיחה זו הוסיפי: "#close" להודעה')
         return (
             '<html><body dir="rtl" lang="he" '
             'style="direction:rtl;text-align:right;font-family:Arial,sans-serif;">'
             f"<p>{lines}</p>"
-            '<hr style="border:none;border-top:1px solid #ccc;margin:16px 0;">'
-            f'<p style="color:#888;font-size:0.85em;">{footer_html}</p>'
             "</body></html>"
         )
 
-    def _extract_body_and_marker(self, text: str, subject: str) -> tuple[str, bool]:
-        clean = (text or "").strip()
-        clean = clean.replace("\r\n", "\n")
-        clean = self._strip_our_footer(clean)
-        clean = self._strip_quoted_text(clean)
-
-        close_requested = (
-            self._CLOSE_MARKER in clean.lower()
-            or self._CLOSE_MARKER in (subject or "").lower()
-        )
-        if close_requested:
-            clean = re.sub(r"#close", "", clean, flags=re.IGNORECASE).strip()
-        return clean, close_requested
-
-    def _strip_our_footer(self, body: str) -> str:
-        idx = body.find(self._FOOTER_SEPARATOR)
-        if idx != -1:
-            return body[:idx].strip()
-        return body
+    def _extract_body(self, text: str) -> str:
+        clean = (text or "").strip().replace("\r\n", "\n")
+        return self._strip_quoted_text(clean)
 
     @staticmethod
     def _strip_quoted_text(body: str) -> str:

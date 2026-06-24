@@ -11,9 +11,8 @@ logger = logging.getLogger(__name__)
 
 from src.adapters.telegram_adapter import TelegramAdapter
 from src.adapters.whatsapp_adapter import WhatsAppAdapter
-from src.core.menu_handler import MenuHandler, _SESSION_DECISION_TEXT, _CLOSE_CONTINUE_BUTTONS
+from src.core.menu_handler import MenuHandler
 from src.core.message_router import MessageRouter
-from src.models.menu_response import MenuResponse
 from src.services.email_gateway import GraphEmailGateway
 from src.services.file_handler import FileHandler
 
@@ -58,25 +57,16 @@ def main() -> None:
         chat_id: str,
         text: str,
         attachments: list[str],
-        close_requested: bool,
     ) -> None:
-        from src.core import session_manager
-
-        logger.info("Forwarding reply to %s:%s (close=%s)", platform, chat_id, close_requested)
+        logger.info("Forwarding reply to %s:%s", platform, chat_id)
 
         adapter = whatsapp_adapter if platform == "whatsapp" and whatsapp_adapter else telegram_adapter
 
-        if close_requested:
-            body = f"הודעה ממשרד רואה החשבון שלך:\n\n{text}\n\n{_SESSION_DECISION_TEXT}" if text else _SESSION_DECISION_TEXT
-            adapter.send_response(chat_id, MenuResponse(text=body, buttons=_CLOSE_CONTINUE_BUTTONS))
-        elif text:
+        if text:
             adapter.send_text(chat_id, f"הודעה ממשרד רואה החשבון שלך:\n\n{text}")
 
         for path in attachments:
             adapter.send_file(chat_id, path)
-
-        if close_requested:
-            session_manager.set_state(chat_id, "awaiting_session_decision", platform)
 
     email_gateway.set_reply_callback(on_secretary_reply)
     email_gateway.start_polling()

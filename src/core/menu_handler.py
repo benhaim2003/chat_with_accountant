@@ -3,6 +3,7 @@ import logging
 from src.models.internal_message import InternalMessage, MessageType
 from src.models.menu_response import MenuResponse, MenuButton
 from src.core import session_manager
+from src.repositories.pilot_clients import client_label
 from src.services.email_gateway import GraphEmailGateway
 from src.services.file_handler import FileHandler
 
@@ -12,8 +13,6 @@ _MENU_TEXT = (
     "תודה שפנית למוקד של רבינוביץ אבן ממן :)\n\n"
     "איך נוכל לעזור לך?"
 )
-
-_SESSION_DECISION_TEXT = "האם לסגור את השיחה?"
 
 _TAP_BUTTON_REMINDER = "תודה שפנית למוקד של רבינוביץ אבן ממן :)\nכיצד נוכל לעזור?"
 
@@ -26,11 +25,6 @@ _MENU_BUTTONS = (
 _YES_NO_BUTTONS = (
     MenuButton(label="כן", payload="1"),
     MenuButton(label="לא", payload="2"),
-)
-
-_CLOSE_CONTINUE_BUTTONS = (
-    MenuButton(label="סיים שיחה", payload="1"),
-    MenuButton(label="המשך",      payload="2"),
 )
 
 _FOLLOWUP_BUTTONS_BY_KIND = {
@@ -53,9 +47,6 @@ _FOLLOWUP_BUTTONS_BY_KIND = {
 
 _FOLLOWUP_PROMPT = "מה תרצה/י לעשות עכשיו?"
 
-_CLOSE_PAYLOAD = "1"
-_KEEP_PAYLOAD  = "2"
-
 _OPTION_A_PAYLOAD = "1"
 _OPTION_B_PAYLOAD = "2"
 _OPTION_C_PAYLOAD = "3"
@@ -74,7 +65,6 @@ _STATE_HANDLERS = {
     "awaiting_description":              "_handle_description",
     "awaiting_file_request":             "_handle_file_request",
     "awaiting_accountant_message":       "_handle_accountant_message",
-    "awaiting_session_decision":         "_handle_session_decision",
     "awaiting_followup_decision":        "_handle_followup_decision",
 }
 
@@ -170,8 +160,9 @@ class MenuHandler:
         file_path = session.context.get("pending_file_path")
         file_name = session.context.get("pending_file_name", "לא ידוע")
 
-        subject = f"[CPA Bot] העלאת מסמך — {message.chat_id}"
-        body = f"לקוח/ה (מזהה צ'אט: {message.chat_id}) העלה/תה מסמך.\nשם קובץ: {file_name}"
+        label = client_label(message.chat_id)
+        subject = f"[CPA Bot] {label} · העלאת מסמך"
+        body = f"{label} העלה/תה מסמך.\nשם קובץ: {file_name}"
         if description:
             body += f"\n\nתיאור: {description}"
 
@@ -195,9 +186,10 @@ class MenuHandler:
 
 
     def _handle_file_request(self, message: InternalMessage) -> MenuResponse:
-        subject = f"[CPA Bot] בקשת קובץ — {message.chat_id}"
+        label = client_label(message.chat_id)
+        subject = f"[CPA Bot] {label} · בקשת קובץ"
         body = (
-            f"לקוח/ה (מזהה צ'אט: {message.chat_id}) מבקש/ת קובץ.\n\n"
+            f"{label} מבקש/ת קובץ.\n\n"
             f"בקשה: {message.text}"
         )
         thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id, platform=message.platform.value)
@@ -214,8 +206,9 @@ class MenuHandler:
 
 
     def _handle_accountant_message(self, message: InternalMessage) -> MenuResponse:
-        subject = f"[CPA Bot] הודעת לקוח — {message.chat_id}"
-        body = f"לקוח/ה (מזהה צ'אט: {message.chat_id}) השאיר/ה הודעה:\n\n{message.text or ''}"
+        label = client_label(message.chat_id)
+        subject = f"[CPA Bot] {label} · הודעה לרו״ח"
+        body = f"{label} השאיר/ה הודעה:\n\n{message.text or ''}"
         thread_id = self._email.send(
             subject=subject,
             body=body,
@@ -238,23 +231,6 @@ class MenuHandler:
         return MenuResponse(
             text="השיחה הסתיימה. בכל פעם שתזדקק/י לעזרה, פשוט שלח/י הודעה ונציג לך את התפריט."
         )
-
-    def _handle_session_decision(self, message: InternalMessage) -> MenuResponse:
-        if message.message_type != MessageType.BUTTON:
-            return MenuResponse(text=_TAP_BUTTON_REMINDER, buttons=_CLOSE_CONTINUE_BUTTONS)
-
-        text = (message.text or "").strip()
-
-        if text == _CLOSE_PAYLOAD:
-            session_manager.set_state(message.chat_id, "idle", message.platform)
-            return MenuResponse(
-                text="השיחה הסתיימה. בכל פעם שתזדקק/י לעזרה, פשוט שלח/י הודעה ונציג לך את התפריט :)"
-            )
-
-        if text == _KEEP_PAYLOAD:
-            return self._show_menu(message)
-
-        return MenuResponse(text=_TAP_BUTTON_REMINDER, buttons=_CLOSE_CONTINUE_BUTTONS)
 
     def _handle_followup_decision(self, message: InternalMessage) -> MenuResponse:
         session = session_manager.get_session(message.chat_id, message.platform)

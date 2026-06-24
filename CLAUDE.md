@@ -31,12 +31,13 @@ A working Telegram bot that bridges client messages to the CPA office email syst
 ## 3. Phase 2: Minimum Viable Product (MVP) — IN PROGRESS 🔄
 
 ### What was built so far
-* Full menu-driven FSM with 3 options (א/ב/ג) — option ד (other) removed
-* File upload flow with optional description (option א)
-* File request flow (option ב)
-* Accumulating message flow for accountant (option ג)
-* Client-initiated `/close` command
-* Secretary-initiated `#close` marker in email replies
+* Full button-driven FSM with 3 options (1/2/3) — option ד (other) removed
+* File upload flow with optional description (option 1)
+* File request flow (option 2)
+* One-shot message-to-accountant flow (option 3)
+* After each completed flow: "send another / main menu / close" buttons
+* Client-initiated `/close` command (silent escape hatch; not advertised in the UI)
+* Pilot client identification via hardcoded chat_id → name map in `src/repositories/pilot_clients.py`
 * WhatsApp adapter — **code complete but NOT activated** (waiting for a phone number not registered to an existing WhatsApp account)
 * Docker containerization (`Dockerfile` + `.dockerignore`)
 * Azure Container Apps deployment (`deploy.ps1`) — bot is **live in production**
@@ -83,28 +84,31 @@ config.py                    # Root-level logging config
 | `awaiting_description` | Waiting for client to type the description text |
 | `awaiting_file_request` | Waiting for client to describe which file they need (option ב) |
 | `awaiting_accountant_message` | Waiting for the client's message to the accountant (option ג) |
-| `awaiting_session_decision` | Secretary replied with `#close`, or a one-shot flow just completed; client prompted to close (1) or continue (2) |
+| `awaiting_followup_decision` | A one-shot flow just completed; client prompted to send another, return to main menu, or close |
 
 ### Menu & Option Flows
 
-**Option א — Upload document:**
+**Option 1 — Upload document:**
 1. Ask client to send file
-2. File received → ask "add description? 1=yes 2=no"
+2. File received → ask "add description? כן/לא" (buttons)
 3. If yes → ask for description text
-4. Send email with file + optional description → set `awaiting_session_decision`
+4. Send email with file + optional description → set `awaiting_followup_decision`
 
-**Option ב — Request a file:**
+**Option 2 — Request a file:**
 1. Ask client to describe the file they need
-2. Send email with request → set `awaiting_session_decision`
+2. Send email with request → set `awaiting_followup_decision`
 
-**Option ג — Message to accountant:**
-1. Client sends a single message → send email → set `awaiting_session_decision` (same as options א/ב)
+**Option 3 — Message to accountant:**
+1. Client sends a single message → send email → set `awaiting_followup_decision`
 
-**Secretary `#close` reply:**
-- Email poller detects `#close` marker in reply → sets `awaiting_session_decision` → client sees reply + close/continue prompt
+**Follow-up after each completed flow:** three contextual buttons — "send another" (re-enters the same flow's input state), "main menu", "close".
+
+**Secretary reply:**
+- Poller forwards body + attachments straight to the client. No close marker — clients end the conversation themselves with the close button.
 
 **Client `/close` command:**
 - Routes: `TelegramAdapter._on_close` → `MessageRouter.handle_close` → `MenuHandler.handle_close` → `session_manager.clear_session`
+- Silent escape hatch for free-text states; not mentioned in the menu UI.
 
 ### Redis Key Conventions
 | Key | Value | TTL |
@@ -113,14 +117,13 @@ config.py                    # Root-level logging config
 | `thread:{conversationId}` | `platform:chat_id` (e.g. `telegram:123456`) | 7 days |
 
 ### Email Bridge
-1. Client interaction → `GraphEmailGateway.send()` creates draft, attaches file if any, sends, stores `thread:{conversationId} → platform:chat_id` in Redis.
+1. Client interaction → `GraphEmailGateway.send()` creates draft, attaches file if any, sends, stores `thread:{conversationId} → platform:chat_id` in Redis. Subjects are `[CPA Bot] {client_label} · {action}` so the secretary can scan the inbox.
 2. Poller (every 30 s) reads unread inbox messages, matches `conversationId` → `platform:chat_id` via Redis.
-3. Strips quoted history, our RTL HTML footer, and `#close` marker from reply body.
-4. `on_secretary_reply` callback in `main.py` forwards text + attachments to client. If `#close`, appends session decision prompt and sets `awaiting_session_decision`.
+3. Strips quoted history from the reply body.
+4. `on_secretary_reply` callback in `main.py` forwards text + attachments to the client. No close-marker plumbing — closing the conversation is the client's responsibility (via the close button or `/close`).
 
 ### Email Body Stripping
-`GraphEmailGateway._extract_body_and_marker` strips:
-- Our own footer (Hebrew line starting with `* אם ברצונך לסיים...`)
+`GraphEmailGateway._extract_body` strips:
 - Quoted text starting with `On ... wrote:` (English clients)
 - Hebrew quoted text starting with `בתאריך` (pattern: `(?:^|\n)[‎‏‪-‮‫⁦-⁩]*בתאריך\s`)
 - Lines starting with `>` as fallback

@@ -68,7 +68,7 @@ def main() -> None:
         if close_requested:
             body = f"הודעה ממשרד רואה החשבון שלך:\n\n{text}\n\n{_SESSION_DECISION_TEXT}" if text else _SESSION_DECISION_TEXT
             adapter.send_text(chat_id, body)
-        else:
+        elif text:
             adapter.send_text(chat_id, f"הודעה ממשרד רואה החשבון שלך:\n\n{text}")
 
         for path in attachments:

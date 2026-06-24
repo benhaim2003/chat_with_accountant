@@ -305,7 +305,7 @@ class GraphEmailGateway:
         match = re.search(r"\nOn\s.{5,300}wrote:\s*\n", body, re.DOTALL)
         if match:
             return body[: match.start()].strip()
-        match = re.search(r"\n[‎‏‪-‮⁦-⁩]*בתאריך\s", body)
+        match = re.search(r"(?:^|\n)[‎‏‪-‮‫⁦-⁩]*בתאריך\s", body)
         if match:
             return body[: match.start()].strip()
         match = re.search(r"\n[-_]{3,}\s*\n.*?From:.*?Sent:", body, re.DOTALL)

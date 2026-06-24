@@ -38,12 +38,12 @@ A working Telegram bot that bridges client messages to the CPA office email syst
 * After each completed flow: "send another / main menu / close" buttons
 * Client-initiated `/close` command (silent escape hatch; not advertised in the UI)
 * Pilot client identification via hardcoded chat_id → name map in `src/repositories/pilot_clients.py`
-* WhatsApp adapter — **live in production** via WhatsApp Business Cloud API on `+[REDACTED-PHONE]`
+* WhatsApp adapter — **live in production** via WhatsApp Business Cloud API on the bot's registered WhatsApp number (set in `.env`, not committed)
 * Docker containerization (`Dockerfile` + `.dockerignore`)
 * Azure Container Apps deployment (`deploy.ps1`) — bot is **live in production**
 
 ### WhatsApp Status
-`src/adapters/whatsapp_adapter.py` is active. The FastAPI webhook starts inside the container on port 8080 whenever `WHATSAPP_TOKEN` / `WHATSAPP_PHONE_NUMBER_ID` / `WHATSAPP_VERIFY_TOKEN` are all set. Azure Container Apps exposes it externally via HTTPS ingress; Meta points its webhook at `https://ca-cpa-bot.[REDACTED-FQDN].northeurope.azurecontainerapps.io/webhook/whatsapp`. The production WhatsApp number is `+[REDACTED-PHONE]`.
+`src/adapters/whatsapp_adapter.py` is active. The FastAPI webhook starts inside the container on port 8080 whenever `WHATSAPP_TOKEN` / `WHATSAPP_PHONE_NUMBER_ID` / `WHATSAPP_VERIFY_TOKEN` are all set. Azure Container Apps exposes it externally via HTTPS ingress; Meta's webhook points at `https://<container-app-fqdn>/webhook/whatsapp` (the FQDN is shown by `deploy.ps1` after a successful deploy, also retrievable via `az containerapp show`).
 
 ### Codebase Structure
 ```
@@ -145,7 +145,7 @@ LOG_LEVEL=INFO
 # WhatsApp Business Cloud API — all three must be set to activate the adapter.
 # When present, deploy.ps1 also enables external HTTPS ingress on port 8080.
 WHATSAPP_TOKEN=                # Permanent access token from Meta
-WHATSAPP_PHONE_NUMBER_ID=      # Phone-number ID for +[REDACTED-PHONE] (NOT the test number's ID)
+WHATSAPP_PHONE_NUMBER_ID=      # Phone-number ID for the production WhatsApp number (NOT the test number's ID)
 WHATSAPP_VERIFY_TOKEN=         # Any random string; must match what's pasted into Meta's webhook config
 ```
 
@@ -159,9 +159,9 @@ The bot runs 24/7 on **Azure Container Apps** (North Europe). Redis runs as a si
 | Container Registry | `remcpabotacr` | `israelcentral` |
 | Container Apps Env | `cae-cpa-bot` | `northeurope` (Container Apps not available in israelcentral) |
 | Container App | `ca-cpa-bot` | Bot + Redis sidecar; external HTTPS ingress on port 8080 |
-| Public FQDN | `ca-cpa-bot.[REDACTED-FQDN].northeurope.azurecontainerapps.io` | WhatsApp webhook is at `/webhook/whatsapp` |
-| Telegram bot | `@bencpa_test_bot` | `t.me/bencpa_test_bot` |
-| WhatsApp number | `+[REDACTED-PHONE]` | Configured under the project's WhatsApp Business Account in Meta |
+| Public FQDN | shown by `deploy.ps1` after deploy | WhatsApp webhook is at `/webhook/whatsapp` on this FQDN |
+| Telegram bot | configured via `TELEGRAM_BOT_TOKEN` in `.env` | Token from @BotFather |
+| WhatsApp number | configured via `WHATSAPP_PHONE_NUMBER_ID` in `.env` | Registered under the WhatsApp Business Account in Meta |
 
 **To redeploy after a code change:**
 ```powershell

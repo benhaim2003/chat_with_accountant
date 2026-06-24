@@ -23,8 +23,8 @@ Get-Content "$PSScriptRoot\.env" |
     }
 
 $required = @(
-    'TELEGRAM_BOT_TOKEN','AZURE_TENANT_ID','AZURE_CLIENT_ID',
-    'AZURE_CLIENT_SECRET','EMAIL_USERNAME','SECRETARIAT_EMAIL'
+    'TELEGRAM_BOT_TOKEN','AZURE_SUBSCRIPTION_ID','AZURE_TENANT_ID','AZURE_CLIENT_ID',
+    'AZURE_CLIENT_SECRET','EMAIL_USERNAME','SECRETARIAT_EMAIL','PILOT_CLIENTS_JSON'
 )
 foreach ($key in $required) {
     if (-not $envVars.ContainsKey($key) -or [string]::IsNullOrWhiteSpace($envVars[$key])) {
@@ -98,18 +98,22 @@ if ($whatsappEnabled) {
 
 # --- Build deployment YAML -----------------------------------------------------
 $telegramToken    = $envVars['TELEGRAM_BOT_TOKEN']
+$subscriptionId   = $envVars['AZURE_SUBSCRIPTION_ID']
 $azureTenantId    = $envVars['AZURE_TENANT_ID']
 $azureClientId    = $envVars['AZURE_CLIENT_ID']
 $azureSecret      = $envVars['AZURE_CLIENT_SECRET']
 $emailUsername    = $envVars['EMAIL_USERNAME']
 $secretariatEmail = $envVars['SECRETARIAT_EMAIL']
+# PILOT_CLIENTS_JSON is opaque JSON; YAML uses single quotes so internal double
+# quotes don't need escaping (Hebrew names shouldn't contain single quotes).
+$pilotClientsJson = $envVars['PILOT_CLIENTS_JSON']
 
 $yaml = @"
 name: ca-cpa-bot
 type: Microsoft.App/containerApps
 location: northeurope
 properties:
-  managedEnvironmentId: /subscriptions/[REDACTED-SUBSCRIPTION]/resourceGroups/rg-cpa-bot/providers/Microsoft.App/managedEnvironments/cae-cpa-bot
+  managedEnvironmentId: /subscriptions/$subscriptionId/resourceGroups/rg-cpa-bot/providers/Microsoft.App/managedEnvironments/cae-cpa-bot
   configuration:
     activeRevisionsMode: Single
     registries:
@@ -128,7 +132,9 @@ properties:
       - name: azure-client-secret
         value: "$azureSecret"
       - name: secretariat-email
-        value: "$secretariatEmail"$whatsappSecrets$ingressBlock
+        value: "$secretariatEmail"
+      - name: pilot-clients-json
+        value: '$pilotClientsJson'$whatsappSecrets$ingressBlock
   template:
     containers:
       - name: ca-cpa-bot
@@ -154,7 +160,9 @@ properties:
           - name: EMAIL_POLL_INTERVAL
             value: "$pollInterval"
           - name: LOG_LEVEL
-            value: "$logLevel"$whatsappEnv
+            value: "$logLevel"
+          - name: PILOT_CLIENTS_JSON
+            secretRef: pilot-clients-json$whatsappEnv
       - name: redis
         image: redis:7-alpine
         resources:

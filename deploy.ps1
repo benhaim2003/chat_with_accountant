@@ -104,9 +104,10 @@ $azureClientId    = $envVars['AZURE_CLIENT_ID']
 $azureSecret      = $envVars['AZURE_CLIENT_SECRET']
 $emailUsername    = $envVars['EMAIL_USERNAME']
 $secretariatEmail = $envVars['SECRETARIAT_EMAIL']
-# PILOT_CLIENTS_JSON is opaque JSON; YAML uses single quotes so internal double
-# quotes don't need escaping (Hebrew names shouldn't contain single quotes).
+# Base64-encode the pilot clients JSON so the deploy YAML stays ASCII-only —
+# the Windows Azure CLI reads YAML as cp1252 and dies on Hebrew bytes otherwise.
 $pilotClientsJson = $envVars['PILOT_CLIENTS_JSON']
+$pilotClientsB64  = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($pilotClientsJson))
 
 $yaml = @"
 name: ca-cpa-bot
@@ -133,8 +134,8 @@ properties:
         value: "$azureSecret"
       - name: secretariat-email
         value: "$secretariatEmail"
-      - name: pilot-clients-json
-        value: '$pilotClientsJson'$whatsappSecrets$ingressBlock
+      - name: pilot-clients-json-b64
+        value: "$pilotClientsB64"$whatsappSecrets$ingressBlock
   template:
     containers:
       - name: ca-cpa-bot
@@ -161,8 +162,8 @@ properties:
             value: "$pollInterval"
           - name: LOG_LEVEL
             value: "$logLevel"
-          - name: PILOT_CLIENTS_JSON
-            secretRef: pilot-clients-json$whatsappEnv
+          - name: PILOT_CLIENTS_JSON_B64
+            secretRef: pilot-clients-json-b64$whatsappEnv
       - name: redis
         image: redis:7-alpine
         resources:

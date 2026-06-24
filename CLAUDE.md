@@ -1,12 +1,12 @@
 # Project Context: Chat with Accountant
 
 ## 1. Project Overview
-"Chat with Accountant" is an automated messaging and file-handling system designed for a Certified Public Accountant (CPA) office. The ultimate goal of the project is to:
+"Chat with Accountant" is an automated messaging and file-handling system designed for a Certified Public Accountant (CPA) office — **רבינוביץ אבן ממן**. The ultimate goal of the project is to:
 * Streamline how the office handles routine client requests.
 * Reduce the administrative burden on the secretariat.
 * Improve client response times through an easy-to-use chat interface.
 
-The project is structured into three distinct development phases: **Proof of Concept (POC)** ✅, **Minimum Viable Product (MVP)**, and **Next Stage (AI Integration)**.
+The project is structured into three distinct development phases: **Proof of Concept (POC)** ✅, **Minimum Viable Product (MVP)** 🔄, and **Next Stage (AI Integration)**.
 
 ### Architectural Philosophy: Forward Compatibility
 A core requirement of this project is zero technical debt. The transition between phases must be a seamless evolution, not a complete rewrite. The codebase must be modular from day one—specifically anticipating the future addition of new platforms (WhatsApp), database-driven authentication, and LLM endpoints.
@@ -26,16 +26,33 @@ A working Telegram bot that bridges client messages to the CPA office email syst
 | Session & thread storage | Redis (`redis>=5.0.0`) |
 | Runtime | Python 3.12+ |
 
+---
+
+## 3. Phase 2: Minimum Viable Product (MVP) — IN PROGRESS 🔄
+
+### What was built so far
+* Full menu-driven FSM with 3 options (א/ב/ג) — option ד (other) removed
+* File upload flow with optional description (option א)
+* File request flow (option ב)
+* Accumulating message flow for accountant (option ג)
+* Client-initiated `/close` command
+* Secretary-initiated `#close` marker in email replies
+* WhatsApp adapter — **code complete but NOT activated** (waiting for a phone number not registered to an existing WhatsApp account)
+* Docker containerization (`Dockerfile` + `.dockerignore`)
+
+### WhatsApp Status
+`src/adapters/whatsapp_adapter.py` is fully implemented (Cloud API, FastAPI webhook, media upload/download) but is **not started** unless `WHATSAPP_TOKEN` env var is set. No phone number has been registered yet.
+
 ### Codebase Structure
 ```
 src/
   adapters/
-    base.py                  # PlatformAdapter ABC — add WhatsApp here in MVP
+    base.py                  # PlatformAdapter ABC
     telegram_adapter.py      # Telegram bot; thread-safe send via run_coroutine_threadsafe
-    whatsapp_adapter.py      # Stub for MVP
+    whatsapp_adapter.py      # WhatsApp Cloud API — complete but inactive (no phone number yet)
   core/
     menu_handler.py          # FSM: routes messages through 8 states
-    message_router.py        # Dispatches InternalMessage to MenuHandler
+    message_router.py        # Dispatches InternalMessage to MenuHandler; handle_close()
     session_manager.py       # Redis-backed session store (key: session:{platform}:{chat_id})
   infrastructure/
     redis_client.py          # Singleton get_redis() — reads REDIS_URL from env
@@ -47,32 +64,67 @@ src/
     client_repository.py     # Loads clients from data/clients.json (MVP: replace with DB)
   services/
     email_gateway.py         # GraphEmailGateway — send/poll via Microsoft Graph
-    file_handler.py          # Saves incoming Telegram files to temp dir
+    file_handler.py          # Saves incoming files to /tmp/cpa_bot_uploads/
   main.py                    # Wires everything together; on_secretary_reply callback
+Dockerfile                   # python:3.12-slim; CMD ["python", "-m", "src.main"]
+.dockerignore
+config.py                    # Root-level logging config
 ```
 
 ### Session State Machine
 | State | Meaning |
 | :--- | :--- |
 | `idle` | No active session — next message shows the menu |
-| `awaiting_option` | Menu shown, waiting for א/ב/ג/ד |
-| `awaiting_file_upload` | Waiting for client to upload a document |
-| `awaiting_file_request` | Waiting for client to describe which file they need |
-| `awaiting_accountant_message` | Waiting for client's message to the accountant |
-| `awaiting_other` | Waiting for client's free-text inquiry |
-| `awaiting_session_decision` | Secretary replied; client prompted to close (1) or continue (2) |
-| `session_open` | Active thread — client can send follow-ups |
+| `awaiting_option` | Menu shown, waiting for א/ב/ג |
+| `awaiting_file_upload` | Waiting for client to upload a document (option א) |
+| `awaiting_description_choice` | File received, asking if client wants to add a description |
+| `awaiting_description` | Waiting for client to type the description text |
+| `awaiting_file_request` | Waiting for client to describe which file they need (option ב) |
+| `awaiting_accountant_message` | Waiting for first message to the accountant (option ג) |
+| `collecting_accountant_messages` | Accumulating follow-up messages; each sent immediately with full history |
+| `awaiting_session_decision` | Secretary replied with `#close`; client prompted to close (1) or continue (2) |
+
+### Menu & Option Flows
+
+**Option א — Upload document:**
+1. Ask client to send file
+2. File received → ask "add description? 1=yes 2=no"
+3. If yes → ask for description text
+4. Send email with file + optional description → set `awaiting_session_decision`
+
+**Option ב — Request a file:**
+1. Ask client to describe the file they need
+2. Send email with request → set `awaiting_session_decision`
+
+**Option ג — Message to accountant:**
+1. Client sends first message → buffer it, send email immediately, remind about `/close`
+2. Each subsequent message → append to buffer, resend entire buffer as one email (full history, duplicates OK)
+3. Client sends `/close` → clear session
+
+**Secretary `#close` reply:**
+- Email poller detects `#close` marker in reply → sets `awaiting_session_decision` → client sees reply + close/continue prompt
+
+**Client `/close` command:**
+- Routes: `TelegramAdapter._on_close` → `MessageRouter.handle_close` → `MenuHandler.handle_close` → `session_manager.clear_session`
 
 ### Redis Key Conventions
 | Key | Value | TTL |
 | :--- | :--- | :--- |
 | `session:{platform}:{chat_id}` | JSON-serialized `UserSession` | 24 h (reset on every write) |
-| `thread:{conversationId}` | `chat_id` (plain string) | 7 days |
+| `thread:{conversationId}` | `platform:chat_id` (e.g. `telegram:123456`) | 7 days |
 
 ### Email Bridge
-1. Client sends a menu choice → `GraphEmailGateway.send()` creates a draft, sends it, stores `thread:{conversationId} → chat_id` in Redis.
-2. Poller (every 30 s) reads unread messages in the mailbox, matches `conversationId` to a `chat_id` via Redis, strips quoted history and our own footer, detects `#close` marker.
-3. Reply forwarded to client via Telegram. If `#close` was present, session moves to `awaiting_session_decision`.
+1. Client interaction → `GraphEmailGateway.send()` creates draft, attaches file if any, sends, stores `thread:{conversationId} → platform:chat_id` in Redis.
+2. Poller (every 30 s) reads unread inbox messages, matches `conversationId` → `platform:chat_id` via Redis.
+3. Strips quoted history, our RTL HTML footer, and `#close` marker from reply body.
+4. `on_secretary_reply` callback in `main.py` forwards text + attachments to client. If `#close`, appends session decision prompt and sets `awaiting_session_decision`.
+
+### Email Body Stripping
+`GraphEmailGateway._extract_body_and_marker` strips:
+- Our own footer (Hebrew line starting with `* אם ברצונך לסיים...`)
+- Quoted text starting with `On ... wrote:` (English clients)
+- Hebrew quoted text starting with `בתאריך` (pattern: `(?:^|\n)[‎‏‪-‮‫⁦-⁩]*בתאריך\s`)
+- Lines starting with `>` as fallback
 
 ### Required Environment Variables
 ```
@@ -80,39 +132,45 @@ TELEGRAM_BOT_TOKEN=
 AZURE_TENANT_ID=
 AZURE_CLIENT_ID=
 AZURE_CLIENT_SECRET=
-EMAIL_USERNAME=          # mailbox the bot acts as
-SECRETARIAT_EMAIL=       # secretary's inbox
+EMAIL_USERNAME=               # mailbox the bot acts as (e.g. bot@example.com)
+SECRETARIAT_EMAIL=            # secretary's inbox
 REDIS_URL=redis://localhost:6379/0
 EMAIL_POLL_INTERVAL=30
 LOG_LEVEL=INFO
+
+# WhatsApp (leave unset until phone number is registered)
+WHATSAPP_TOKEN=
+WHATSAPP_PHONE_NUMBER_ID=
+WHATSAPP_VERIFY_TOKEN=
 ```
 
 ### Running locally
 ```bash
-# Start Redis (WSL)
-wsl -u root -e bash -c "redis-server --daemonize yes --bind 0.0.0.0 --protected-mode no"
+# Start Redis (WSL) — must use --bind 0.0.0.0 so Windows can reach it
+wsl -u root -e bash -c "systemctl stop redis-server; redis-server --daemonize yes --bind 0.0.0.0 --protected-mode no"
+
+# Set REDIS_URL to WSL IP (check with: wsl hostname -I)
+# REDIS_URL=redis://172.29.180.1:6379/0
 
 # Start bot
 python -m src.main
 ```
 
----
+**Common issues:**
+- `ConnectionRefusedError` on Redis: WSL Redis bound to 127.0.0.1 — must stop systemd service first, then restart with `--bind 0.0.0.0`
+- `Telegram 409 Conflict`: previous bot process still running — kill with `Get-Process python* | Stop-Process -Force`
 
-## 3. Phase 2: Minimum Viable Product (MVP)
-The MVP builds upon the POC by introducing a new communication channel, user authentication, and basic automation to reduce the secretariat's workload.
-
-* **Expanded Platforms:** Telegram and WhatsApp
-
-### New Features & Automations
-* **Client Authentication:** The system will identify and verify the client based on their phone number.
-* **Self-Service File Retrieval:** By leveraging phone number authentication, the bot will automatically locate and send requested files back to the client without requiring the secretary's intervention.
-* **Automated Document Routing:** When an authenticated client uploads files (like bills or invoices), the bot will automatically identify the client and forward those specific documents directly to their assigned personal accountant, bypassing the general secretariat inbox.
+### Remaining MVP Features (not yet built)
+* **Client Authentication:** Identify client by phone number via `ClientRepository.get_by_phone()`
+* **Self-Service File Retrieval:** Auto-fetch and send files to authenticated clients (option ב bypass)
+* **Automated Document Routing:** Route uploaded docs directly to the client's assigned accountant
+* **WhatsApp Activation:** Register a phone number and activate `WhatsAppAdapter`
 
 ### Key Extension Points Already in Place
-* `PlatformAdapter` ABC in `src/adapters/base.py` — add `WhatsAppAdapter` without touching core logic.
-* `ClientRepository.get_by_phone()` exists and is ready for phone-number auth.
-* `UserSession` already has `client_id`, `client_name`, `phone` fields.
-* Redis session store is already persistent across restarts — no rework needed.
+* `PlatformAdapter` ABC in `src/adapters/base.py` — `WhatsAppAdapter` is ready
+* `ClientRepository.get_by_phone()` exists and is ready for phone-number auth
+* `UserSession` already has `client_id`, `client_name`, `phone` fields
+* Redis session store is already persistent across restarts
 
 ---
 
@@ -120,11 +178,11 @@ The MVP builds upon the POC by introducing a new communication channel, user aut
 The final stage upgrades the bot from a simple menu-routing system to an intelligent conversational agent.
 
 ### New Features & Automations
-* **LLM Integration:** An advanced Large Language Model (LLM) will be integrated to process the "Other" (free-text) inputs from the client.
-* **Conversational Capabilities:** The bot will be able to read, understand, and extract intent from the client's free text. It will autonomously continue the correspondence with the client, answering queries or guiding them through processes without requiring immediate human intervention.
+* **LLM Integration:** An advanced Large Language Model (LLM) will handle free-text client inputs.
+* **Conversational Capabilities:** The bot will autonomously continue correspondence, answer queries, and guide clients without requiring immediate human intervention.
 
-### Key Extension Point Already in Place
-* `menu_handler._handle_other()` has a comment marking it as the Phase 3 hook — replace the email send with an LLM call there.
+### Key Extension Point
+* Add option ד back to the menu and wire it to an LLM call in `menu_handler.py`. The FSM is designed to accommodate this without restructuring.
 
 ---
 

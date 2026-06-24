@@ -8,17 +8,17 @@ from src.services.file_handler import FileHandler
 logger = logging.getLogger(__name__)
 
 _MENU_TEXT = (
-    "ברוכים הבאים לבוט של משרד רואה החשבון.\n\n"
-    "אנא בחר/י אפשרות:\n"
-    "  א — העלאת חשבונית או שטר עלויות\n"
-    "  ב — בקשת קובץ מהמשרד\n"
-    "  ג — השארת הודעה לרואה החשבון\n"
-    "  ד — אחר"
+    "תודה שפנית למוקד של רבינוביץ אבן ממן :)\n\n"
+    "איך נוכל לעזור לך:\n"
+    "  א — שליחת מסמך/חשבונית למשרד\n"
+    "  ב — בקשת מסמך מהמשרד\n"
+    "  ג — השארת הודעה לרואה החשבון\n\n"
+    "ניתן בכל עת לשלוח /close לסיום השיחה."
 )
 
 _SESSION_DECISION_TEXT = (
-    "האם תרצה/י לסגור את השיחה?\n\n"
-    "  1 — כן, סגור את הסשן\n"
+    "האם לסגור את השיחה?\n\n"
+    "  1 — כן, סגור את השיחה\n"
     "  2 — לא, אני רוצה להמשיך לשלוח הודעות"
 )
 
@@ -28,16 +28,19 @@ _KEEP_KEYWORDS  = {"2", "לא", "פתוח", "המשך", "עוד"}
 _OPTION_A = {"א", "A"}
 _OPTION_B = {"ב", "B"}
 _OPTION_C = {"ג", "C"}
-_OPTION_D = {"ד", "D"}
+
+_YES_KEYWORDS = {"כן", "1", "y", "yes"}
+_NO_KEYWORDS  = {"לא", "2", "n", "no"}
 
 _STATE_HANDLERS = {
-    "awaiting_option":             "_route_option",
-    "awaiting_file_upload":        "_handle_upload",
-    "awaiting_file_request":       "_handle_file_request",
-    "awaiting_accountant_message": "_handle_accountant_message",
-    "awaiting_other":              "_handle_other",
-    "awaiting_session_decision":   "_handle_session_decision",
-    "session_open":                "_handle_session_open",
+    "awaiting_option":                   "_route_option",
+    "awaiting_file_upload":              "_handle_upload",
+    "awaiting_description_choice":       "_handle_description_choice",
+    "awaiting_description":              "_handle_description",
+    "awaiting_file_request":             "_handle_file_request",
+    "awaiting_accountant_message":       "_handle_accountant_message",
+    "collecting_accountant_messages":    "_handle_collecting_accountant_messages",
+    "awaiting_session_decision":         "_handle_session_decision",
 }
 
 
@@ -70,105 +73,119 @@ class MenuHandler:
 
         if choice in _OPTION_A:
             session_manager.set_state(message.chat_id, "awaiting_file_upload", message.platform)
-            return "אנא העלה/י את החשבונית או שטר העלויות כקובץ PDF."
+            return "אנא שלח/י את המסמך או החשבונית."
 
         if choice in _OPTION_B:
             session_manager.set_state(message.chat_id, "awaiting_file_request", message.platform)
-            return "אנא תאר/י איזה קובץ אתה/את צריך/ה מהמשרד."
+            return "איזה מסמך היית רוצה לקבל מהמשרד?"
 
         if choice in _OPTION_C:
             session_manager.set_state(
                 message.chat_id, "awaiting_accountant_message", message.platform
             )
-            return "אנא הקלד/י את ההודעה שלך לרואה החשבון."
+            return "אנא שלח/י את ההודעה שלך לרואה החשבון."
 
-        if choice in _OPTION_D:
-            session_manager.set_state(message.chat_id, "awaiting_other", message.platform)
-            return "אנא הקלד/י את הודעתך ונחזור אליך בהקדם."
-
-        return f"אנא ענה/י עם א, ב, ג, או ד.\n\n{_MENU_TEXT}"
+        return f"אנא ענה/י עם א, ב, או ג.\n\n{_MENU_TEXT}"
 
 
     def _handle_upload(self, message: InternalMessage) -> str:
         if message.message_type not in (MessageType.DOCUMENT, MessageType.PHOTO):
             return "אנא שלח/י את הקובץ כמסמך או תמונה מצורפת."
 
-        subject = f"[CPA Bot] העלאת מסמך — צ'אט {message.chat_id}"
-        body = (
-            f"לקוח/ה (מזהה צ'אט: {message.chat_id}) העלה/תה מסמך.\n"
-            f"שם קובץ: {message.file_name or 'לא ידוע'}"
+        session_manager.set_state(
+            message.chat_id, "awaiting_description_choice", message.platform,
+            pending_file_path=message.file_path,
+            pending_file_name=message.file_name or "לא ידוע",
         )
+        return "האם תרצה/י להוסיף תיאור למסמך?\n\n  1 — כן\n  2 — לא"
+
+    def _handle_description_choice(self, message: InternalMessage) -> str:
+        answer = (message.text or "").strip().lower()
+
+        if answer in _YES_KEYWORDS:
+            session_manager.set_state(message.chat_id, "awaiting_description", message.platform)
+            return "אנא כתוב/י את התיאור למסמך."
+
+        if answer in _NO_KEYWORDS:
+            return self._send_upload_email(message, description=None)
+
+        return "אנא ענה/י 1 (כן) או 2 (לא)."
+
+    def _handle_description(self, message: InternalMessage) -> str:
+        return self._send_upload_email(message, description=message.text)
+
+    def _send_upload_email(self, message: InternalMessage, description: str | None) -> str:
+        session = session_manager.get_session(message.chat_id, message.platform)
+        file_path = session.context.get("pending_file_path")
+        file_name = session.context.get("pending_file_name", "לא ידוע")
+
+        subject = f"[CPA Bot] העלאת מסמך — {message.chat_id}"
+        body = f"לקוח/ה (מזהה צ'אט: {message.chat_id}) העלה/תה מסמך.\nשם קובץ: {file_name}"
+        if description:
+            body += f"\n\nתיאור: {description}"
+
         thread_id = self._email.send(
             subject=subject,
             body=body,
-            attachment_path=message.file_path,
+            attachment_path=file_path,
             chat_id=message.chat_id,
+            platform=message.platform.value,
         )
         session_manager.set_state(
             message.chat_id, "awaiting_session_decision", message.platform,
             active_thread_id=thread_id,
             follow_up_subject=subject,
         )
-        return (
-            "תודה! המסמך שלך התקבל והועבר למשרד.\n\n"
-            + _SESSION_DECISION_TEXT
-        )
+        return "תודה! המסמך שלך התקבל והועבר למשרד.\n\n" + _SESSION_DECISION_TEXT
 
-    # ------------------------------------------------- option ב: file request
-    # Logical end = secretary sends back the file → close/keep triggered from
-    # the email reply callback in main.py, NOT here.
 
     def _handle_file_request(self, message: InternalMessage) -> str:
-        subject = f"[CPA Bot] בקשת קובץ — צ'אט {message.chat_id}"
+        subject = f"[CPA Bot] בקשת קובץ — {message.chat_id}"
         body = (
             f"לקוח/ה (מזהה צ'אט: {message.chat_id}) מבקש/ת קובץ.\n\n"
             f"בקשה: {message.text}"
         )
-        thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id)
+        thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id, platform=message.platform.value)
         session_manager.set_state(
-            message.chat_id, "session_open", message.platform,
+            message.chat_id, "awaiting_session_decision", message.platform,
             active_thread_id=thread_id,
             follow_up_subject=subject,
-            session_type="file_request",
         )
-        return "בקשתך הועברה למשרד. ניתן לשלוח הודעות נוספות בכל עת."
+        return "בקשתך הועברה למשרד.\n\n" + _SESSION_DECISION_TEXT
 
-    # ------------------------------------------ option ג: accountant message
-    # Logical end = secretary sends a response → close/keep triggered from
-    # the email reply callback in main.py, NOT here.
 
     def _handle_accountant_message(self, message: InternalMessage) -> str:
-        subject = f"[CPA Bot] הודעת לקוח — צ'אט {message.chat_id}"
-        body = (
-            f"לקוח/ה (מזהה צ'אט: {message.chat_id}) השאיר/ה הודעה:\n\n"
-            f"{message.text}"
-        )
-        thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id)
+        buffer = [message.text or ""]
         session_manager.set_state(
-            message.chat_id, "session_open", message.platform,
-            active_thread_id=thread_id,
-            follow_up_subject=subject,
-            session_type="accountant_message",
+            message.chat_id, "collecting_accountant_messages", message.platform,
+            message_buffer=buffer,
         )
-        return "הודעתך הועברה לרואה החשבון שלך. ניתן לשלוח הודעות נוספות בכל עת."
-
-    # ---------------------------------------------------- option ד: other
-
-    def _handle_other(self, message: InternalMessage) -> str:
-        subject = f"[CPA Bot] פנייה כללית — צ'אט {message.chat_id}"
-        body = (
-            f"לקוח/ה (מזהה צ'אט: {message.chat_id}) שלח/ה פנייה כללית:\n\n"
-            f"{message.text}"
+        self._send_accountant_email(message.chat_id, message.platform.value, buffer)
+        return (
+            "ההודעה שלך נשלחה לרואה החשבון. ניתן לשלוח הודעות נוספות.\n"
+            "שלח/י /close לסיום השיחה."
         )
-        # Phase 3 hook: replace email send with LLM processing here
-        thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id)
+
+    def _handle_collecting_accountant_messages(self, message: InternalMessage) -> str:
+        session = session_manager.get_session(message.chat_id, message.platform)
+        buffer: list = session.context.get("message_buffer", [])
+        buffer.append(message.text or "")
         session_manager.set_state(
-            message.chat_id, "session_open", message.platform,
-            active_thread_id=thread_id,
-            follow_up_subject=subject,
-            session_type="other",
+            message.chat_id, "collecting_accountant_messages", message.platform,
+            message_buffer=buffer,
         )
-        return "תודה! הודעתך התקבלה. ניתן לשלוח הודעות נוספות בכל עת."
+        self._send_accountant_email(message.chat_id, message.platform.value, buffer)
+        return "✓ נשלח."
+
+    def _send_accountant_email(self, chat_id: str, platform_str: str, messages: list) -> None:
+        full_text = "\n\n".join(messages)
+        subject = f"[CPA Bot] הודעת לקוח — {chat_id}"
+        body = f"לקוח/ה (מזהה צ'אט: {chat_id}) השאיר/ה הודעה:\n\n{full_text}"
+        self._email.send(subject=subject, body=body, chat_id=chat_id, platform=platform_str)
+
+    def handle_close(self, chat_id: str, platform) -> str:
+        session_manager.clear_session(chat_id, platform)
+        return "השיחה הסתיימה. בכל פעם שתזדקק/י לעזרה, פשוט שלח/י הודעה ונציג לך את התפריט."
 
     def _handle_session_decision(self, message: InternalMessage) -> str:
         text = (message.text or "").strip()
@@ -178,32 +195,8 @@ class MenuHandler:
             return "השיחה הסתיימה. בכל פעם שתזדקק/י לעזרה, פשוט שלח/י הודעה ונציג לך את התפריט :)"
 
         if text in _KEEP_KEYWORDS:
-            session_manager.set_state(message.chat_id, "session_open", message.platform)
             return self._show_menu(message)
 
         return f"אנא ענה/י 1 (לסגירה) או 2 (להמשך).\n\n{_SESSION_DECISION_TEXT}"
 
 
-    def _handle_session_open(self, message: InternalMessage) -> str:
-        session = session_manager.get_session(message.chat_id, message.platform)
-        subject = session.context.get(
-            "follow_up_subject", f"[CPA Bot] המשך שיחה — צ'אט {message.chat_id}"
-        )
-
-        if message.message_type in (MessageType.DOCUMENT, MessageType.PHOTO):
-            body = (
-                f"המשך מלקוח/ה (מזהה צ'אט: {message.chat_id}) — מסמך.\n"
-                f"שם קובץ: {message.file_name or 'לא ידוע'}"
-            )
-            self._email.send(
-                subject=subject,
-                body=body,
-                attachment_path=message.file_path,
-                chat_id=message.chat_id,
-            )
-        else:
-            body = f"המשך מלקוח/ה (מזהה צ'אט: {message.chat_id}):\n\n{message.text}"
-            self._email.send(subject=subject, body=body, chat_id=message.chat_id)
-
-        session_manager.set_state(message.chat_id, "session_open", message.platform)
-        return "✓ נשלח"

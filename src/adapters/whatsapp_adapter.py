@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import mimetypes
 import threading
 from pathlib import Path
 
@@ -192,14 +193,19 @@ class WhatsAppAdapter(PlatformAdapter):
 
     def _upload_media(self, file_path: str) -> str:
         path = Path(file_path)
+        mime_type, _ = mimetypes.guess_type(file_path)
+        if not mime_type:
+            mime_type = "application/pdf" if path.suffix.lower() == ".pdf" else "application/octet-stream"
         with open(file_path, "rb") as f:
             r = requests.post(
                 f"{_WA_BASE}/{self._phone_number_id}/media",
                 headers={"Authorization": f"Bearer {self._token}"},
-                files={"file": (path.name, f, "application/octet-stream")},
-                data={"messaging_product": "whatsapp"},
+                files={"file": (path.name, f, mime_type)},
+                data={"messaging_product": "whatsapp", "type": mime_type},
                 timeout=60,
             )
+        if not r.ok:
+            logger.error("WhatsApp media upload failed (%s %s): %s", r.status_code, mime_type, r.text)
         r.raise_for_status()
         return r.json()["id"]
 

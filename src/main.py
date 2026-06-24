@@ -65,8 +65,19 @@ def main() -> None:
         if text:
             adapter.send_text(chat_id, f"הודעה ממשרד רואה החשבון שלך:\n\n{text}")
 
+        failed = 0
         for path in attachments:
-            adapter.send_file(chat_id, path)
+            try:
+                adapter.send_file(chat_id, path)
+            except Exception as exc:
+                failed += 1
+                logger.error("Failed to deliver attachment %s to %s:%s — %s", path, platform, chat_id, exc)
+
+        if failed:
+            adapter.send_text(
+                chat_id,
+                f"⚠️ {failed} מתוך {len(attachments)} קבצים לא הצליחו להישלח. המשרד יצור קשר.",
+            )
 
     email_gateway.set_reply_callback(on_secretary_reply)
     email_gateway.start_polling()

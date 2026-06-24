@@ -8,17 +8,17 @@ from src.services.file_handler import FileHandler
 logger = logging.getLogger(__name__)
 
 _MENU_TEXT = (
-    "ברוכים הבאים לבוט של משרד רואה החשבון.\n\n"
-    "אנא בחר/י אפשרות:\n"
-    "  א — העלאת חשבונית או שטר עלויות\n"
-    "  ב — בקשת קובץ מהמשרד\n"
+    "תודה שפנית למוקד של רבינוביץ אבן ממן :)\n\n"
+    "איך נוכל לעזור לך:\n"
+    "  א — שליחת מסמך/חשבונית למשרד\n"
+    "  ב — בקשת מסמך מהמשרד\n"
     "  ג — השארת הודעה לרואה החשבון\n\n"
-    "בכל עת, הקלד/י /close לסיום השיחה."
+    "ניתן בכל עת לשלוח /close לסיום השיחה."
 )
 
 _SESSION_DECISION_TEXT = (
-    "האם תרצה/י לסגור את השיחה?\n\n"
-    "  1 — כן, סגור את הסשן\n"
+    "האם לסגור את השיחה?\n\n"
+    "  1 — כן, סגור את השיחה\n"
     "  2 — לא, אני רוצה להמשיך לשלוח הודעות"
 )
 
@@ -68,17 +68,17 @@ class MenuHandler:
 
         if choice in _OPTION_A:
             session_manager.set_state(message.chat_id, "awaiting_file_upload", message.platform)
-            return "אנא העלה/י את החשבונית או שטר העלויות כקובץ PDF."
+            return "אנא שלח/י את המסמך או החשבונית."
 
         if choice in _OPTION_B:
             session_manager.set_state(message.chat_id, "awaiting_file_request", message.platform)
-            return "אנא תאר/י איזה קובץ אתה/את צריך/ה מהמשרד."
+            return "איזה מסמך היית רוצה לקבל מהמשרד?"
 
         if choice in _OPTION_C:
             session_manager.set_state(
                 message.chat_id, "awaiting_accountant_message", message.platform
             )
-            return "אנא הקלד/י את ההודעה שלך לרואה החשבון."
+            return "אנא שלח/י את ההודעה שלך לרואה החשבון."
 
         return f"אנא ענה/י עם א, ב, או ג.\n\n{_MENU_TEXT}"
 
@@ -109,12 +109,9 @@ class MenuHandler:
             + _SESSION_DECISION_TEXT
         )
 
-    # ------------------------------------------------- option ב: file request
-    # Logical end = secretary sends back the file → close/keep triggered from
-    # the email reply callback in main.py, NOT here.
 
     def _handle_file_request(self, message: InternalMessage) -> str:
-        subject = f"[CPA Bot] בקשת קובץ — צ'אט {message.chat_id}"
+        subject = f"[CPA Bot] בקשת קובץ — {message.chat_id}"
         body = (
             f"לקוח/ה (מזהה צ'אט: {message.chat_id}) מבקש/ת קובץ.\n\n"
             f"בקשה: {message.text}"
@@ -128,12 +125,9 @@ class MenuHandler:
         )
         return "בקשתך הועברה למשרד. ניתן לשלוח הודעות נוספות בכל עת."
 
-    # ------------------------------------------ option ג: accountant message
-    # Logical end = secretary sends a response → close/keep triggered from
-    # the email reply callback in main.py, NOT here.
 
     def _handle_accountant_message(self, message: InternalMessage) -> str:
-        subject = f"[CPA Bot] הודעת לקוח — צ'אט {message.chat_id}"
+        subject = f"[CPA Bot] הודעת לקוח — {message.chat_id}"
         body = (
             f"לקוח/ה (מזהה צ'אט: {message.chat_id}) השאיר/ה הודעה:\n\n"
             f"{message.text}"
@@ -164,7 +158,7 @@ class MenuHandler:
     def _handle_session_open(self, message: InternalMessage) -> str:
         session = session_manager.get_session(message.chat_id, message.platform)
         subject = session.context.get(
-            "follow_up_subject", f"[CPA Bot] המשך שיחה — צ'אט {message.chat_id}"
+            "follow_up_subject", f"[CPA Bot] המשך שיחה — {message.chat_id}"
         )
 
         if message.message_type in (MessageType.DOCUMENT, MessageType.PHOTO):

@@ -16,3 +16,6 @@ Thumbs.db
 
 # Environment variables
 .env
+
+# Redis persistence snapshot
+dump.rdb

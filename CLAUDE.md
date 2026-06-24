@@ -82,9 +82,8 @@ config.py                    # Root-level logging config
 | `awaiting_description_choice` | File received, asking if client wants to add a description |
 | `awaiting_description` | Waiting for client to type the description text |
 | `awaiting_file_request` | Waiting for client to describe which file they need (option ב) |
-| `awaiting_accountant_message` | Waiting for first message to the accountant (option ג) |
-| `collecting_accountant_messages` | Accumulating follow-up messages; each sent immediately with full history |
-| `awaiting_session_decision` | Secretary replied with `#close`; client prompted to close (1) or continue (2) |
+| `awaiting_accountant_message` | Waiting for the client's message to the accountant (option ג) |
+| `awaiting_session_decision` | Secretary replied with `#close`, or a one-shot flow just completed; client prompted to close (1) or continue (2) |
 
 ### Menu & Option Flows
 
@@ -99,9 +98,7 @@ config.py                    # Root-level logging config
 2. Send email with request → set `awaiting_session_decision`
 
 **Option ג — Message to accountant:**
-1. Client sends first message → buffer it, send email immediately, remind about `/close`
-2. Each subsequent message → append to buffer, resend entire buffer as one email (full history, duplicates OK)
-3. Client sends `/close` → clear session
+1. Client sends a single message → send email → set `awaiting_session_decision` (same as options א/ב)
 
 **Secretary `#close` reply:**
 - Email poller detects `#close` marker in reply → sets `awaiting_session_decision` → client sees reply + close/continue prompt

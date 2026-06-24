@@ -51,7 +51,6 @@ _STATE_HANDLERS = {
     "awaiting_description":              "_handle_description",
     "awaiting_file_request":             "_handle_file_request",
     "awaiting_accountant_message":       "_handle_accountant_message",
-    "collecting_accountant_messages":    "_handle_collecting_accountant_messages",
     "awaiting_session_decision":         "_handle_session_decision",
 }
 
@@ -182,35 +181,23 @@ class MenuHandler:
 
 
     def _handle_accountant_message(self, message: InternalMessage) -> MenuResponse:
-        buffer = [message.text or ""]
-        session_manager.set_state(
-            message.chat_id, "collecting_accountant_messages", message.platform,
-            message_buffer=buffer,
+        subject = f"[CPA Bot] הודעת לקוח — {message.chat_id}"
+        body = f"לקוח/ה (מזהה צ'אט: {message.chat_id}) השאיר/ה הודעה:\n\n{message.text or ''}"
+        thread_id = self._email.send(
+            subject=subject,
+            body=body,
+            chat_id=message.chat_id,
+            platform=message.platform.value,
         )
-        self._send_accountant_email(message.chat_id, message.platform.value, buffer)
+        session_manager.set_state(
+            message.chat_id, "awaiting_session_decision", message.platform,
+            active_thread_id=thread_id,
+            follow_up_subject=subject,
+        )
         return MenuResponse(
-            text=(
-                "ההודעה שלך נשלחה לרואה החשבון. ניתן לשלוח הודעות נוספות.\n"
-                "שלח/י /close לסיום השיחה."
-            )
+            text="ההודעה שלך נשלחה לרואה החשבון.\n\n" + _SESSION_DECISION_TEXT,
+            buttons=_CLOSE_CONTINUE_BUTTONS,
         )
-
-    def _handle_collecting_accountant_messages(self, message: InternalMessage) -> MenuResponse:
-        session = session_manager.get_session(message.chat_id, message.platform)
-        buffer: list = session.context.get("message_buffer", [])
-        buffer.append(message.text or "")
-        session_manager.set_state(
-            message.chat_id, "collecting_accountant_messages", message.platform,
-            message_buffer=buffer,
-        )
-        self._send_accountant_email(message.chat_id, message.platform.value, buffer)
-        return MenuResponse(text="✓ נשלח.")
-
-    def _send_accountant_email(self, chat_id: str, platform_str: str, messages: list) -> None:
-        full_text = "\n\n".join(messages)
-        subject = f"[CPA Bot] הודעת לקוח — {chat_id}"
-        body = f"לקוח/ה (מזהה צ'אט: {chat_id}) השאיר/ה הודעה:\n\n{full_text}"
-        self._email.send(subject=subject, body=body, chat_id=chat_id, platform=platform_str)
 
     def handle_close(self, chat_id: str, platform) -> MenuResponse:
         session_manager.clear_session(chat_id, platform)

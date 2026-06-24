@@ -39,6 +39,7 @@ A working Telegram bot that bridges client messages to the CPA office email syst
 * Secretary-initiated `#close` marker in email replies
 * WhatsApp adapter — **code complete but NOT activated** (waiting for a phone number not registered to an existing WhatsApp account)
 * Docker containerization (`Dockerfile` + `.dockerignore`)
+* Azure Container Apps deployment (`deploy.ps1`) — bot is **live in production**
 
 ### WhatsApp Status
 `src/adapters/whatsapp_adapter.py` is fully implemented (Cloud API, FastAPI webhook, media upload/download) but is **not started** unless `WHATSAPP_TOKEN` env var is set. No phone number has been registered yet.
@@ -68,6 +69,7 @@ src/
   main.py                    # Wires everything together; on_secretary_reply callback
 Dockerfile                   # python:3.12-slim; CMD ["python", "-m", "src.main"]
 .dockerignore
+deploy.ps1                   # Azure Container Apps deployment script (reads .env, builds YAML, deploys)
 config.py                    # Root-level logging config
 ```
 
@@ -144,6 +146,35 @@ WHATSAPP_PHONE_NUMBER_ID=
 WHATSAPP_VERIFY_TOKEN=
 ```
 
+### Azure Deployment (Production) ✅
+
+The bot runs 24/7 on **Azure Container Apps** (North Europe). Redis runs as a sidecar container inside the same pod (`localhost:6379`) — no managed Redis service needed.
+
+| Resource | Name | Notes |
+| :--- | :--- | :--- |
+| Resource Group | `rg-cpa-bot` | `israelcentral` |
+| Container Registry | `remcpabotacr` | `israelcentral` |
+| Container Apps Env | `cae-cpa-bot` | `northeurope` (Container Apps not available in israelcentral) |
+| Container App | `ca-cpa-bot` | Bot + Redis sidecar |
+| Telegram bot | `@bencpa_test_bot` | `t.me/bencpa_test_bot` |
+
+**To redeploy after a code change:**
+```powershell
+docker build -t remcpabotacr.azurecr.io/cpa-bot:latest .
+docker push remcpabotacr.azurecr.io/cpa-bot:latest
+powershell -ExecutionPolicy Bypass -File .\deploy.ps1
+```
+
+**To view live logs:**
+```
+az containerapp logs show -n ca-cpa-bot -g rg-cpa-bot --tail 50
+```
+
+**To tear down everything:**
+```
+az group delete --name rg-cpa-bot --yes
+```
+
 ### Running locally
 ```bash
 # Start Redis (WSL) — must use --bind 0.0.0.0 so Windows can reach it
@@ -158,7 +189,7 @@ python -m src.main
 
 **Common issues:**
 - `ConnectionRefusedError` on Redis: WSL Redis bound to 127.0.0.1 — must stop systemd service first, then restart with `--bind 0.0.0.0`
-- `Telegram 409 Conflict`: previous bot process still running — kill with `Get-Process python* | Stop-Process -Force`
+- `Telegram 409 Conflict`: another bot instance still running — kill with `Get-Process python* | Stop-Process -Force`; if Azure deployment is running, stop local bot entirely
 
 ### Remaining MVP Features (not yet built)
 * **Client Authentication:** Identify client by phone number via `ClientRepository.get_by_phone()`

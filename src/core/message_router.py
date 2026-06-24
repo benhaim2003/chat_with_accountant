@@ -18,3 +18,6 @@ class MessageRouter:
             message.message_type,
         )
         return self._menu.handle(message)
+
+    def handle_close(self, chat_id: str, platform) -> str:
+        return self._menu.handle_close(chat_id, platform)

@@ -16,7 +16,6 @@ from telegram.ext import (
 from src.adapters.base import PlatformAdapter
 from src.models.internal_message import InternalMessage, MessageType, Platform
 from src.core.message_router import MessageRouter
-from src.core import session_manager
 from src.services.file_handler import FileHandler
 
 logger = logging.getLogger(__name__)
@@ -80,10 +79,8 @@ class TelegramAdapter(PlatformAdapter):
 
     async def _on_close(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         chat_id = str(update.effective_chat.id)
-        session_manager.clear_session(chat_id, Platform.TELEGRAM)
-        await update.message.reply_text(
-            "השיחה הסתיימה. בכל פעם שתזדקק/י לעזרה, פשוט שלח/י הודעה ונציג לך את התפריט."
-        )
+        response = self._router.handle_close(chat_id, Platform.TELEGRAM)
+        await update.message.reply_text(response)
 
     async def _on_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msg = self._make_text_message(update, update.message.text or "")

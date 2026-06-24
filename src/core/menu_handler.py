@@ -33,14 +33,14 @@ _YES_KEYWORDS = {"כן", "1", "y", "yes"}
 _NO_KEYWORDS  = {"לא", "2", "n", "no"}
 
 _STATE_HANDLERS = {
-    "awaiting_option":              "_route_option",
-    "awaiting_file_upload":         "_handle_upload",
-    "awaiting_description_choice":  "_handle_description_choice",
-    "awaiting_description":         "_handle_description",
-    "awaiting_file_request":        "_handle_file_request",
-    "awaiting_accountant_message":  "_handle_accountant_message",
-    "awaiting_session_decision":    "_handle_session_decision",
-    "session_open":                 "_handle_session_open",
+    "awaiting_option":                   "_route_option",
+    "awaiting_file_upload":              "_handle_upload",
+    "awaiting_description_choice":       "_handle_description_choice",
+    "awaiting_description":              "_handle_description",
+    "awaiting_file_request":             "_handle_file_request",
+    "awaiting_accountant_message":       "_handle_accountant_message",
+    "collecting_accountant_messages":    "_handle_collecting_accountant_messages",
+    "awaiting_session_decision":         "_handle_session_decision",
 }
 
 
@@ -155,19 +155,37 @@ class MenuHandler:
 
 
     def _handle_accountant_message(self, message: InternalMessage) -> str:
-        subject = f"[CPA Bot] הודעת לקוח — {message.chat_id}"
-        body = (
-            f"לקוח/ה (מזהה צ'אט: {message.chat_id}) השאיר/ה הודעה:\n\n"
-            f"{message.text}"
-        )
-        thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id, platform=message.platform.value)
+        buffer = [message.text or ""]
         session_manager.set_state(
-            message.chat_id, "session_open", message.platform,
-            active_thread_id=thread_id,
-            follow_up_subject=subject,
-            session_type="accountant_message",
+            message.chat_id, "collecting_accountant_messages", message.platform,
+            message_buffer=buffer,
         )
-        return "הודעתך הועברה לרואה החשבון שלך. ניתן לשלוח הודעות נוספות בכל עת."
+        self._send_accountant_email(message.chat_id, message.platform.value, buffer)
+        return (
+            "ההודעה שלך נשלחה לרואה החשבון. ניתן לשלוח הודעות נוספות.\n"
+            "שלח/י /close לסיום השיחה."
+        )
+
+    def _handle_collecting_accountant_messages(self, message: InternalMessage) -> str:
+        session = session_manager.get_session(message.chat_id, message.platform)
+        buffer: list = session.context.get("message_buffer", [])
+        buffer.append(message.text or "")
+        session_manager.set_state(
+            message.chat_id, "collecting_accountant_messages", message.platform,
+            message_buffer=buffer,
+        )
+        self._send_accountant_email(message.chat_id, message.platform.value, buffer)
+        return "✓ נשלח."
+
+    def _send_accountant_email(self, chat_id: str, platform_str: str, messages: list) -> None:
+        full_text = "\n\n".join(messages)
+        subject = f"[CPA Bot] הודעת לקוח — {chat_id}"
+        body = f"לקוח/ה (מזהה צ'אט: {chat_id}) השאיר/ה הודעה:\n\n{full_text}"
+        self._email.send(subject=subject, body=body, chat_id=chat_id, platform=platform_str)
+
+    def handle_close(self, chat_id: str, platform) -> str:
+        session_manager.clear_session(chat_id, platform)
+        return "השיחה הסתיימה. בכל פעם שתזדקק/י לעזרה, פשוט שלח/י הודעה ונציג לך את התפריט."
 
     def _handle_session_decision(self, message: InternalMessage) -> str:
         text = (message.text or "").strip()
@@ -182,27 +200,3 @@ class MenuHandler:
         return f"אנא ענה/י 1 (לסגירה) או 2 (להמשך).\n\n{_SESSION_DECISION_TEXT}"
 
 
-    def _handle_session_open(self, message: InternalMessage) -> str:
-        session = session_manager.get_session(message.chat_id, message.platform)
-        subject = session.context.get(
-            "follow_up_subject", f"[CPA Bot] המשך שיחה — {message.chat_id}"
-        )
-
-        if message.message_type in (MessageType.DOCUMENT, MessageType.PHOTO):
-            body = (
-                f"המשך מלקוח/ה (מזהה צ'אט: {message.chat_id}) — מסמך.\n"
-                f"שם קובץ: {message.file_name or 'לא ידוע'}"
-            )
-            self._email.send(
-                subject=subject,
-                body=body,
-                attachment_path=message.file_path,
-                chat_id=message.chat_id,
-                platform=message.platform.value,
-            )
-        else:
-            body = f"המשך מלקוח/ה (מזהה צ'אט: {message.chat_id}):\n\n{message.text}"
-            self._email.send(subject=subject, body=body, chat_id=message.chat_id, platform=message.platform.value)
-
-        session_manager.set_state(message.chat_id, "session_open", message.platform)
-        return "✓ נשלח"

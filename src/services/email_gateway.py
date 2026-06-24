@@ -91,12 +91,6 @@ class GraphEmailGateway:
         chat_id: Optional[str] = None,
         platform: str = "telegram",
     ) -> Optional[str]:
-        """Send a message to the secretariat.
-
-        Returns the Graph conversationId (the thread handle) on success, or
-        None on failure. Blocking network call — run from a worker thread, as
-        start_polling() does for the receive side.
-        """
         draft = {
             "subject": subject,
             "body": {"contentType": "html", "content": self._build_rtl_html(body)},

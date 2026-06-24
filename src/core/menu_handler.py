@@ -16,7 +16,7 @@ _MENU_TEXT = (
 
 _SESSION_DECISION_TEXT = "האם לסגור את השיחה?"
 
-_TAP_BUTTON_REMINDER = "אנא לחץ/י על אחד הכפתורים למטה."
+_TAP_BUTTON_REMINDER = "תודה שפנית למוקד של רבינוביץ אבן ממן :)\nכיצד נוכל לעזור?"
 
 _MENU_BUTTONS = (
     MenuButton(label="שליחת מסמך", payload="1"),

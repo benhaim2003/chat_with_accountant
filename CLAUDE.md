@@ -21,7 +21,7 @@ A working Telegram bot that bridges client messages to the CPA office email syst
 ### Tech Stack
 | Component | Technology |
 | :--- | :--- |
-| Messaging platform | Telegram (`python-telegram-bot>=22.0`) |
+| Messaging platforms | Telegram (`python-telegram-bot>=22.0`), WhatsApp Cloud API (FastAPI webhook) |
 | Email | Microsoft Graph API (app-only auth via MSAL) |
 | Session & thread storage | Redis (`redis>=5.0.0`) |
 | Runtime | Python 3.12+ |
@@ -38,39 +38,41 @@ A working Telegram bot that bridges client messages to the CPA office email syst
 * After each completed flow: "send another / main menu / close" buttons
 * Client-initiated `/close` command (silent escape hatch; not advertised in the UI)
 * Pilot client identification via hardcoded chat_id → name map in `src/repositories/pilot_clients.py`
-* WhatsApp adapter — **code complete but NOT activated** (waiting for a phone number not registered to an existing WhatsApp account)
+* WhatsApp adapter — **live in production** via WhatsApp Business Cloud API on `+[REDACTED-PHONE]`
 * Docker containerization (`Dockerfile` + `.dockerignore`)
 * Azure Container Apps deployment (`deploy.ps1`) — bot is **live in production**
 
 ### WhatsApp Status
-`src/adapters/whatsapp_adapter.py` is fully implemented (Cloud API, FastAPI webhook, media upload/download) but is **not started** unless `WHATSAPP_TOKEN` env var is set. No phone number has been registered yet.
+`src/adapters/whatsapp_adapter.py` is active. The FastAPI webhook starts inside the container on port 8080 whenever `WHATSAPP_TOKEN` / `WHATSAPP_PHONE_NUMBER_ID` / `WHATSAPP_VERIFY_TOKEN` are all set. Azure Container Apps exposes it externally via HTTPS ingress; Meta points its webhook at `https://ca-cpa-bot.[REDACTED-FQDN].northeurope.azurecontainerapps.io/webhook/whatsapp`. The production WhatsApp number is `+[REDACTED-PHONE]`.
 
 ### Codebase Structure
 ```
 src/
   adapters/
-    base.py                  # PlatformAdapter ABC
-    telegram_adapter.py      # Telegram bot; thread-safe send via run_coroutine_threadsafe
-    whatsapp_adapter.py      # WhatsApp Cloud API — complete but inactive (no phone number yet)
+    base.py                  # PlatformAdapter ABC (send_text / send_response / send_file / start)
+    telegram_adapter.py      # Telegram bot; inline keyboards + CallbackQueryHandler for button taps
+    whatsapp_adapter.py      # WhatsApp Cloud API; FastAPI webhook + interactive buttons (live)
   core/
-    menu_handler.py          # FSM: routes messages through 8 states
+    menu_handler.py          # FSM: routes messages through 7 states; returns MenuResponse
     message_router.py        # Dispatches InternalMessage to MenuHandler; handle_close()
     session_manager.py       # Redis-backed session store (key: session:{platform}:{chat_id})
   infrastructure/
     redis_client.py          # Singleton get_redis() — reads REDIS_URL from env
   models/
-    internal_message.py      # InternalMessage + Platform/MessageType enums
+    internal_message.py      # InternalMessage + Platform/MessageType enums (TEXT, BUTTON, DOCUMENT, PHOTO)
+    menu_response.py         # MenuResponse(text, buttons=(MenuButton(label, payload), …))
     user_model.py            # UserSession dataclass (persisted to Redis as JSON)
     client.py                # Client + Contact dataclasses
   repositories/
     client_repository.py     # Loads clients from data/clients.json (MVP: replace with DB)
+    pilot_clients.py         # Pilot-phase chat_id → display-name dict (used in email subjects)
   services/
     email_gateway.py         # GraphEmailGateway — send/poll via Microsoft Graph
     file_handler.py          # Saves incoming files to /tmp/cpa_bot_uploads/
   main.py                    # Wires everything together; on_secretary_reply callback
 Dockerfile                   # python:3.12-slim; CMD ["python", "-m", "src.main"]
 .dockerignore
-deploy.ps1                   # Azure Container Apps deployment script (reads .env, builds YAML, deploys)
+deploy.ps1                   # Azure Container Apps deploy (commit-hash image tag; opt-in WhatsApp + ingress)
 config.py                    # Root-level logging config
 ```
 
@@ -78,12 +80,12 @@ config.py                    # Root-level logging config
 | State | Meaning |
 | :--- | :--- |
 | `idle` | No active session — next message shows the menu |
-| `awaiting_option` | Menu shown, waiting for א/ב/ג |
-| `awaiting_file_upload` | Waiting for client to upload a document (option א) |
+| `awaiting_option` | Menu shown, waiting for the user to tap one of the three buttons (payloads "1"/"2"/"3") |
+| `awaiting_file_upload` | Waiting for client to upload a document (option 1) |
 | `awaiting_description_choice` | File received, asking if client wants to add a description |
 | `awaiting_description` | Waiting for client to type the description text |
-| `awaiting_file_request` | Waiting for client to describe which file they need (option ב) |
-| `awaiting_accountant_message` | Waiting for the client's message to the accountant (option ג) |
+| `awaiting_file_request` | Waiting for client to describe which file they need (option 2) |
+| `awaiting_accountant_message` | Waiting for the client's message to the accountant (option 3) |
 | `awaiting_followup_decision` | A one-shot flow just completed; client prompted to send another, return to main menu, or close |
 
 ### Menu & Option Flows
@@ -140,10 +142,11 @@ REDIS_URL=redis://localhost:6379/0
 EMAIL_POLL_INTERVAL=30
 LOG_LEVEL=INFO
 
-# WhatsApp (leave unset until phone number is registered)
-WHATSAPP_TOKEN=
-WHATSAPP_PHONE_NUMBER_ID=
-WHATSAPP_VERIFY_TOKEN=
+# WhatsApp Business Cloud API — all three must be set to activate the adapter.
+# When present, deploy.ps1 also enables external HTTPS ingress on port 8080.
+WHATSAPP_TOKEN=                # Permanent access token from Meta
+WHATSAPP_PHONE_NUMBER_ID=      # Phone-number ID for +[REDACTED-PHONE] (NOT the test number's ID)
+WHATSAPP_VERIFY_TOKEN=         # Any random string; must match what's pasted into Meta's webhook config
 ```
 
 ### Azure Deployment (Production) ✅
@@ -155,14 +158,29 @@ The bot runs 24/7 on **Azure Container Apps** (North Europe). Redis runs as a si
 | Resource Group | `rg-cpa-bot` | `israelcentral` |
 | Container Registry | `remcpabotacr` | `israelcentral` |
 | Container Apps Env | `cae-cpa-bot` | `northeurope` (Container Apps not available in israelcentral) |
-| Container App | `ca-cpa-bot` | Bot + Redis sidecar |
+| Container App | `ca-cpa-bot` | Bot + Redis sidecar; external HTTPS ingress on port 8080 |
+| Public FQDN | `ca-cpa-bot.[REDACTED-FQDN].northeurope.azurecontainerapps.io` | WhatsApp webhook is at `/webhook/whatsapp` |
 | Telegram bot | `@bencpa_test_bot` | `t.me/bencpa_test_bot` |
+| WhatsApp number | `+[REDACTED-PHONE]` | Configured under the project's WhatsApp Business Account in Meta |
 
 **To redeploy after a code change:**
 ```powershell
-docker build -t remcpabotacr.azurecr.io/cpa-bot:latest .
+# deploy.ps1 tags the image with the current git short SHA so Azure can't
+# reuse a cached :latest. Commit your changes first, then:
+$tag = (git rev-parse --short HEAD)
+docker build -t remcpabotacr.azurecr.io/cpa-bot:$tag -t remcpabotacr.azurecr.io/cpa-bot:latest .
+docker push remcpabotacr.azurecr.io/cpa-bot:$tag
 docker push remcpabotacr.azurecr.io/cpa-bot:latest
 powershell -ExecutionPolicy Bypass -File .\deploy.ps1
+```
+
+**To apply an env/secret change without rebuilding the image:**
+```powershell
+# Update .env, then re-run deploy.ps1 — it just updates secrets/config.
+powershell -ExecutionPolicy Bypass -File .\deploy.ps1
+# Container Apps may not auto-restart when only secret values change;
+# force the running revision to pick them up:
+az containerapp revision restart -n ca-cpa-bot -g rg-cpa-bot --revision <revision-name>
 ```
 
 **To view live logs:**
@@ -192,15 +210,16 @@ python -m src.main
 - `Telegram 409 Conflict`: another bot instance still running — kill with `Get-Process python* | Stop-Process -Force`; if Azure deployment is running, stop local bot entirely
 
 ### Remaining MVP Features (not yet built)
-* **Client Authentication:** Identify client by phone number via `ClientRepository.get_by_phone()`
-* **Self-Service File Retrieval:** Auto-fetch and send files to authenticated clients (option ב bypass)
+* **Client Authentication:** Identify client by phone number via `ClientRepository.get_by_phone()` (currently using the pilot dict in `pilot_clients.py` as a stop-gap)
+* **Self-Service File Retrieval:** Auto-fetch and send files to authenticated clients (option 2 bypass)
 * **Automated Document Routing:** Route uploaded docs directly to the client's assigned accountant
-* **WhatsApp Activation:** Register a phone number and activate `WhatsAppAdapter`
+* **Replace pilot dict with real client identification:** The 5-name dict in `src/repositories/pilot_clients.py` is a manual scaffold — swap for phone-based lookup once `ClientRepository` is populated
 
 ### Key Extension Points Already in Place
-* `PlatformAdapter` ABC in `src/adapters/base.py` — `WhatsAppAdapter` is ready
+* `PlatformAdapter` ABC in `src/adapters/base.py` — both Telegram and WhatsApp implementations live
 * `ClientRepository.get_by_phone()` exists and is ready for phone-number auth
 * `UserSession` already has `client_id`, `client_name`, `phone` fields
+* `MenuResponse(text, buttons=…)` gives a platform-agnostic return type — any new adapter just needs to render the buttons natively
 * Redis session store is already persistent across restarts
 
 ---

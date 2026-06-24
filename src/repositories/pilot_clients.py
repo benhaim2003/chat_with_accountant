@@ -3,8 +3,13 @@ from __future__ import annotations
 # Pilot phase: map known Telegram chat ids → client display names.
 # Replace with the real ClientRepository once phone-based identification is wired up.
 _NAMES_BY_CHAT_ID: dict[str, str] = {
-    "[REDACTED-CHATID]": "[REDACTED-NAME]",
-    "[REDACTED-CHATID]":  "[REDACTED-NAME]",
+    # Telegram chat ids
+    "[REDACTED-CHATID]":   "[REDACTED-NAME]",
+    "[REDACTED-CHATID]":    "[REDACTED-NAME]",
+    # WhatsApp phone numbers (E.164 without "+")
+    "[REDACTED-PHONE]": "[REDACTED-NAME]",
+    "[REDACTED-PHONE]": "[REDACTED-NAME]",
+    "[REDACTED-PHONE]": "[REDACTED-NAME]",
 }
 
 

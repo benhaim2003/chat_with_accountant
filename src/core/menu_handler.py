@@ -10,9 +10,9 @@ logger = logging.getLogger(__name__)
 _MENU_TEXT = (
     "תודה שפנית למוקד של רבינוביץ אבן ממן :)\n\n"
     "איך נוכל לעזור לך:\n"
-    "  א — שליחת מסמך/חשבונית למשרד\n"
-    "  ב — בקשת מסמך מהמשרד\n"
-    "  ג — השארת הודעה לרואה החשבון\n\n"
+    "  1 — שליחת מסמך/חשבונית למשרד\n"
+    "  2 — בקשת מסמך מהמשרד\n"
+    "  3 — השארת הודעה לרואה החשבון\n\n"
     "ניתן בכל עת לשלוח /close לסיום השיחה."
 )
 
@@ -25,9 +25,9 @@ _SESSION_DECISION_TEXT = (
 _CLOSE_KEYWORDS = {"1", "כן", "סגור", "סיים", "סגירה", "יציאה"}
 _KEEP_KEYWORDS  = {"2", "לא", "פתוח", "המשך", "עוד"}
 
-_OPTION_A = {"א", "A"}
-_OPTION_B = {"ב", "B"}
-_OPTION_C = {"ג", "C"}
+_OPTION_A = {"1"}
+_OPTION_B = {"2"}
+_OPTION_C = {"3"}
 
 _YES_KEYWORDS = {"כן", "1", "y", "yes"}
 _NO_KEYWORDS  = {"לא", "2", "n", "no"}
@@ -69,7 +69,7 @@ class MenuHandler:
 
     @staticmethod
     def _route_option(message: InternalMessage) -> str:
-        choice = (message.text or "").strip().upper()
+        choice = (message.text or "").strip()
 
         if choice in _OPTION_A:
             session_manager.set_state(message.chat_id, "awaiting_file_upload", message.platform)
@@ -85,7 +85,7 @@ class MenuHandler:
             )
             return "אנא שלח/י את ההודעה שלך לרואה החשבון."
 
-        return f"אנא ענה/י עם א, ב, או ג.\n\n{_MENU_TEXT}"
+        return f"אנא ענה/י עם 1, 2, או 3.\n\n{_MENU_TEXT}"
 
 
     def _handle_upload(self, message: InternalMessage) -> str:

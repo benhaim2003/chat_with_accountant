@@ -12,8 +12,7 @@ _MENU_TEXT = (
     "אנא בחר/י אפשרות:\n"
     "  א — העלאת חשבונית או שטר עלויות\n"
     "  ב — בקשת קובץ מהמשרד\n"
-    "  ג — השארת הודעה לרואה החשבון\n"
-    "  ד — אחר\n\n"
+    "  ג — השארת הודעה לרואה החשבון\n\n"
     "בכל עת, הקלד/י /close לסיום השיחה."
 )
 
@@ -29,14 +28,12 @@ _KEEP_KEYWORDS  = {"2", "לא", "פתוח", "המשך", "עוד"}
 _OPTION_A = {"א", "A"}
 _OPTION_B = {"ב", "B"}
 _OPTION_C = {"ג", "C"}
-_OPTION_D = {"ד", "D"}
 
 _STATE_HANDLERS = {
     "awaiting_option":             "_route_option",
     "awaiting_file_upload":        "_handle_upload",
     "awaiting_file_request":       "_handle_file_request",
     "awaiting_accountant_message": "_handle_accountant_message",
-    "awaiting_other":              "_handle_other",
     "awaiting_session_decision":   "_handle_session_decision",
     "session_open":                "_handle_session_open",
 }
@@ -83,11 +80,7 @@ class MenuHandler:
             )
             return "אנא הקלד/י את ההודעה שלך לרואה החשבון."
 
-        if choice in _OPTION_D:
-            session_manager.set_state(message.chat_id, "awaiting_other", message.platform)
-            return "אנא הקלד/י את הודעתך ונחזור אליך בהקדם."
-
-        return f"אנא ענה/י עם א, ב, ג, או ד.\n\n{_MENU_TEXT}"
+        return f"אנא ענה/י עם א, ב, או ג.\n\n{_MENU_TEXT}"
 
 
     def _handle_upload(self, message: InternalMessage) -> str:
@@ -153,24 +146,6 @@ class MenuHandler:
             session_type="accountant_message",
         )
         return "הודעתך הועברה לרואה החשבון שלך. ניתן לשלוח הודעות נוספות בכל עת."
-
-    # ---------------------------------------------------- option ד: other
-
-    def _handle_other(self, message: InternalMessage) -> str:
-        subject = f"[CPA Bot] פנייה כללית — צ'אט {message.chat_id}"
-        body = (
-            f"לקוח/ה (מזהה צ'אט: {message.chat_id}) שלח/ה פנייה כללית:\n\n"
-            f"{message.text}"
-        )
-        # Phase 3 hook: replace email send with LLM processing here
-        thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id, platform=message.platform.value)
-        session_manager.set_state(
-            message.chat_id, "session_open", message.platform,
-            active_thread_id=thread_id,
-            follow_up_subject=subject,
-            session_type="other",
-        )
-        return "תודה! הודעתך התקבלה. ניתן לשלוח הודעות נוספות בכל עת."
 
     def _handle_session_decision(self, message: InternalMessage) -> str:
         text = (message.text or "").strip()

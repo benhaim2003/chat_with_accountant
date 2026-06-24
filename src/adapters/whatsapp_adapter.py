@@ -12,11 +12,14 @@ from fastapi.responses import PlainTextResponse
 from src.adapters.base import PlatformAdapter
 from src.core.message_router import MessageRouter
 from src.models.internal_message import InternalMessage, MessageType, Platform
+from src.models.menu_response import MenuResponse
 from src.services.file_handler import FileHandler
 
 logger = logging.getLogger(__name__)
 
 _WA_BASE = "https://graph.facebook.com/v19.0"
+_WA_BUTTON_LABEL_MAX = 20
+_WA_MAX_BUTTONS = 3
 
 
 class WhatsAppAdapter(PlatformAdapter):
@@ -41,6 +44,33 @@ class WhatsAppAdapter(PlatformAdapter):
 
     def send_text(self, chat_id: str, text: str) -> None:
         self._post_message(chat_id, {"type": "text", "text": {"body": text}})
+
+    def send_response(self, chat_id: str, response: MenuResponse) -> None:
+        if not response.buttons:
+            self.send_text(chat_id, response.text)
+            return
+
+        buttons = response.buttons[:_WA_MAX_BUTTONS]
+        payload = {
+            "type": "interactive",
+            "interactive": {
+                "type": "button",
+                "body": {"text": response.text},
+                "action": {
+                    "buttons": [
+                        {
+                            "type": "reply",
+                            "reply": {
+                                "id": b.payload,
+                                "title": b.label[:_WA_BUTTON_LABEL_MAX],
+                            },
+                        }
+                        for b in buttons
+                    ]
+                },
+            },
+        }
+        self._post_message(chat_id, payload)
 
     def send_file(self, chat_id: str, file_path: str, caption: str = "") -> None:
         media_id = self._upload_media(file_path)
@@ -109,6 +139,16 @@ class WhatsAppAdapter(PlatformAdapter):
                 message_type=MessageType.TEXT,
                 text=text,
             )
+        elif msg_type == "interactive":
+            interactive = msg.get("interactive", {})
+            reply = interactive.get("button_reply") or interactive.get("list_reply") or {}
+            payload = reply.get("id", "")
+            internal = InternalMessage(
+                platform=Platform.WHATSAPP,
+                chat_id=chat_id,
+                message_type=MessageType.TEXT,
+                text=payload,
+            )
         elif msg_type == "document":
             doc = msg.get("document", {})
             filename = doc.get("filename", "upload.pdf")
@@ -136,8 +176,8 @@ class WhatsAppAdapter(PlatformAdapter):
             logger.debug("Unsupported WhatsApp message type: %s", msg_type)
             return
 
-        reply = self._router.route(internal)
-        self.send_text(chat_id, reply)
+        response = self._router.route(internal)
+        self.send_response(chat_id, response)
 
     # ---------------------------------------------------------------- Graph API helpers
 

@@ -35,6 +35,10 @@ $logLevel     = if ($envVars.ContainsKey('LOG_LEVEL'))            { $envVars['LO
 Write-Host "Fetching ACR credentials..."
 $acrPassword = az acr credential show --name remcpabotacr --query "passwords[0].value" -o tsv
 
+# --- Image tag (commit hash busts Azure's :latest cache) -----------------------
+$imageTag = (git rev-parse --short HEAD).Trim()
+$imageName = "remcpabotacr.azurecr.io/cpa-bot:$imageTag"
+
 # --- Build deployment YAML -----------------------------------------------------
 $yaml = @"
 name: ca-cpa-bot
@@ -64,7 +68,7 @@ properties:
   template:
     containers:
       - name: ca-cpa-bot
-        image: remcpabotacr.azurecr.io/cpa-bot:latest
+        image: $imageName
         resources:
           cpu: 0.5
           memory: 1Gi

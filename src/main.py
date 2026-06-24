@@ -11,8 +11,9 @@ logger = logging.getLogger(__name__)
 
 from src.adapters.telegram_adapter import TelegramAdapter
 from src.adapters.whatsapp_adapter import WhatsAppAdapter
-from src.core.menu_handler import MenuHandler, _SESSION_DECISION_TEXT
+from src.core.menu_handler import MenuHandler, _SESSION_DECISION_TEXT, _CLOSE_CONTINUE_BUTTONS
 from src.core.message_router import MessageRouter
+from src.models.menu_response import MenuResponse
 from src.services.email_gateway import GraphEmailGateway
 from src.services.file_handler import FileHandler
 
@@ -67,7 +68,7 @@ def main() -> None:
 
         if close_requested:
             body = f"הודעה ממשרד רואה החשבון שלך:\n\n{text}\n\n{_SESSION_DECISION_TEXT}" if text else _SESSION_DECISION_TEXT
-            adapter.send_text(chat_id, body)
+            adapter.send_response(chat_id, MenuResponse(text=body, buttons=_CLOSE_CONTINUE_BUTTONS))
         elif text:
             adapter.send_text(chat_id, f"הודעה ממשרד רואה החשבון שלך:\n\n{text}")
 

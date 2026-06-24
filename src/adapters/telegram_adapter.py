@@ -4,9 +4,10 @@ import logging
 import time
 
 import telegram
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -15,6 +16,7 @@ from telegram.ext import (
 
 from src.adapters.base import PlatformAdapter
 from src.models.internal_message import InternalMessage, MessageType, Platform
+from src.models.menu_response import MenuResponse
 from src.core.message_router import MessageRouter
 from src.services.file_handler import FileHandler
 
@@ -34,6 +36,7 @@ class TelegramAdapter(PlatformAdapter):
         self._app.add_handler(CommandHandler("start", self._on_start))
         self._app.add_handler(CommandHandler("menu", self._on_start))
         self._app.add_handler(CommandHandler("close", self._on_close))
+        self._app.add_handler(CallbackQueryHandler(self._on_callback))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_text))
         self._app.add_handler(MessageHandler(filters.Document.ALL, self._on_document))
         self._app.add_handler(MessageHandler(filters.PHOTO, self._on_photo))
@@ -43,6 +46,14 @@ class TelegramAdapter(PlatformAdapter):
     def send_text(self, chat_id: str, text: str) -> None:
         future = asyncio.run_coroutine_threadsafe(
             self._app.bot.send_message(chat_id=int(chat_id), text=text),
+            self._loop,
+        )
+        future.result(timeout=30)
+
+    def send_response(self, chat_id: str, response: MenuResponse) -> None:
+        markup = self._build_markup(response)
+        future = asyncio.run_coroutine_threadsafe(
+            self._app.bot.send_message(chat_id=int(chat_id), text=response.text, reply_markup=markup),
             self._loop,
         )
         future.result(timeout=30)
@@ -75,16 +86,33 @@ class TelegramAdapter(PlatformAdapter):
 
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msg = self._make_text_message(update, "/start")
-        await update.message.reply_text(self._router.route(msg))
+        await self._reply(update, self._router.route(msg))
 
     async def _on_close(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         chat_id = str(update.effective_chat.id)
         response = self._router.handle_close(chat_id, Platform.TELEGRAM)
-        await update.message.reply_text(response)
+        await self._reply(update, response)
 
     async def _on_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msg = self._make_text_message(update, update.message.text or "")
-        await update.message.reply_text(self._router.route(msg))
+        await self._reply(update, self._router.route(msg))
+
+    async def _on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        await query.answer()
+        payload = query.data or ""
+        chat_id = str(query.message.chat.id)
+        msg = InternalMessage(
+            platform=Platform.TELEGRAM,
+            chat_id=chat_id,
+            message_type=MessageType.TEXT,
+            text=payload,
+        )
+        response = self._router.route(msg)
+        markup = self._build_markup(response)
+        await self._app.bot.send_message(
+            chat_id=int(chat_id), text=response.text, reply_markup=markup
+        )
 
     async def _on_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         tg_file = await update.message.document.get_file()
@@ -94,7 +122,7 @@ class TelegramAdapter(PlatformAdapter):
         msg = self._build_message(
             update, MessageType.DOCUMENT, file_path=local_path, file_name=filename
         )
-        await update.message.reply_text(self._router.route(msg))
+        await self._reply(update, self._router.route(msg))
 
     async def _on_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         photo = update.message.photo[-1]  # largest available size
@@ -105,9 +133,20 @@ class TelegramAdapter(PlatformAdapter):
         msg = self._build_message(
             update, MessageType.PHOTO, file_path=local_path, file_name=filename
         )
-        await update.message.reply_text(self._router.route(msg))
+        await self._reply(update, self._router.route(msg))
 
     # --------------------------------------------------------------- helpers
+
+    async def _reply(self, update: Update, response: MenuResponse) -> None:
+        markup = self._build_markup(response)
+        await update.message.reply_text(response.text, reply_markup=markup)
+
+    @staticmethod
+    def _build_markup(response: MenuResponse) -> InlineKeyboardMarkup | None:
+        if not response.buttons:
+            return None
+        rows = [[InlineKeyboardButton(text=b.label, callback_data=b.payload)] for b in response.buttons]
+        return InlineKeyboardMarkup(rows)
 
     def _make_text_message(self, update: Update, text: str) -> InternalMessage:
         return self._build_message(update, MessageType.TEXT, text=text)

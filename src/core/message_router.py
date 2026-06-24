@@ -1,6 +1,7 @@
 from __future__ import annotations
 import logging
 from src.models.internal_message import InternalMessage
+from src.models.menu_response import MenuResponse
 from src.core.menu_handler import MenuHandler
 
 logger = logging.getLogger(__name__)
@@ -10,7 +11,7 @@ class MessageRouter:
     def __init__(self, menu_handler: MenuHandler) -> None:
         self._menu = menu_handler
 
-    def route(self, message: InternalMessage) -> str:
+    def route(self, message: InternalMessage) -> MenuResponse:
         logger.info(
             "Message from %s:%s  type=%s",
             message.platform,
@@ -19,5 +20,5 @@ class MessageRouter:
         )
         return self._menu.handle(message)
 
-    def handle_close(self, chat_id: str, platform) -> str:
+    def handle_close(self, chat_id: str, platform) -> MenuResponse:
         return self._menu.handle_close(chat_id, platform)

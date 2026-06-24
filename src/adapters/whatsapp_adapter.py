@@ -146,7 +146,7 @@ class WhatsAppAdapter(PlatformAdapter):
             internal = InternalMessage(
                 platform=Platform.WHATSAPP,
                 chat_id=chat_id,
-                message_type=MessageType.TEXT,
+                message_type=MessageType.BUTTON,
                 text=payload,
             )
         elif msg_type == "document":

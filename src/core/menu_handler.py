@@ -10,18 +10,13 @@ logger = logging.getLogger(__name__)
 
 _MENU_TEXT = (
     "תודה שפנית למוקד של רבינוביץ אבן ממן :)\n\n"
-    "איך נוכל לעזור לך:\n"
-    "  1 — שליחת מסמך/חשבונית למשרד\n"
-    "  2 — בקשת מסמך מהמשרד\n"
-    "  3 — השארת הודעה לרואה החשבון\n\n"
+    "איך נוכל לעזור לך?\n\n"
     "ניתן בכל עת לשלוח /close לסיום השיחה."
 )
 
-_SESSION_DECISION_TEXT = (
-    "האם לסגור את השיחה?\n\n"
-    "  1 — כן, סגור את השיחה\n"
-    "  2 — לא, אני רוצה להמשיך לשלוח הודעות"
-)
+_SESSION_DECISION_TEXT = "האם לסגור את השיחה?"
+
+_TAP_BUTTON_REMINDER = "אנא לחץ/י על אחד הכפתורים למטה."
 
 _MENU_BUTTONS = (
     MenuButton(label="שליחת מסמך", payload="1"),
@@ -39,15 +34,15 @@ _CLOSE_CONTINUE_BUTTONS = (
     MenuButton(label="המשך",      payload="2"),
 )
 
-_CLOSE_KEYWORDS = {"1", "כן", "סגור", "סיים", "סגירה", "יציאה"}
-_KEEP_KEYWORDS  = {"2", "לא", "פתוח", "המשך", "עוד"}
+_CLOSE_PAYLOAD = "1"
+_KEEP_PAYLOAD  = "2"
 
-_OPTION_A = {"1"}
-_OPTION_B = {"2"}
-_OPTION_C = {"3"}
+_OPTION_A_PAYLOAD = "1"
+_OPTION_B_PAYLOAD = "2"
+_OPTION_C_PAYLOAD = "3"
 
-_YES_KEYWORDS = {"כן", "1", "y", "yes"}
-_NO_KEYWORDS  = {"לא", "2", "n", "no"}
+_YES_PAYLOAD = "1"
+_NO_PAYLOAD  = "2"
 
 _STATE_HANDLERS = {
     "awaiting_option":                   "_route_option",
@@ -86,26 +81,26 @@ class MenuHandler:
 
     @staticmethod
     def _route_option(message: InternalMessage) -> MenuResponse:
+        if message.message_type != MessageType.BUTTON:
+            return MenuResponse(text=_TAP_BUTTON_REMINDER, buttons=_MENU_BUTTONS)
+
         choice = (message.text or "").strip()
 
-        if choice in _OPTION_A:
+        if choice == _OPTION_A_PAYLOAD:
             session_manager.set_state(message.chat_id, "awaiting_file_upload", message.platform)
             return MenuResponse(text="אנא שלח/י את המסמך או החשבונית.")
 
-        if choice in _OPTION_B:
+        if choice == _OPTION_B_PAYLOAD:
             session_manager.set_state(message.chat_id, "awaiting_file_request", message.platform)
             return MenuResponse(text="איזה מסמך היית רוצה לקבל מהמשרד?")
 
-        if choice in _OPTION_C:
+        if choice == _OPTION_C_PAYLOAD:
             session_manager.set_state(
                 message.chat_id, "awaiting_accountant_message", message.platform
             )
             return MenuResponse(text="אנא שלח/י את ההודעה שלך לרואה החשבון.")
 
-        return MenuResponse(
-            text=f"אנא ענה/י עם 1, 2, או 3.\n\n{_MENU_TEXT}",
-            buttons=_MENU_BUTTONS,
-        )
+        return MenuResponse(text=_TAP_BUTTON_REMINDER, buttons=_MENU_BUTTONS)
 
 
     def _handle_upload(self, message: InternalMessage) -> MenuResponse:
@@ -118,24 +113,24 @@ class MenuHandler:
             pending_file_name=message.file_name or "לא ידוע",
         )
         return MenuResponse(
-            text="האם תרצה/י להוסיף תיאור למסמך?\n\n  1 — כן\n  2 — לא",
+            text="האם תרצה/י להוסיף תיאור למסמך?",
             buttons=_YES_NO_BUTTONS,
         )
 
     def _handle_description_choice(self, message: InternalMessage) -> MenuResponse:
-        answer = (message.text or "").strip().lower()
+        if message.message_type != MessageType.BUTTON:
+            return MenuResponse(text=_TAP_BUTTON_REMINDER, buttons=_YES_NO_BUTTONS)
 
-        if answer in _YES_KEYWORDS:
+        answer = (message.text or "").strip()
+
+        if answer == _YES_PAYLOAD:
             session_manager.set_state(message.chat_id, "awaiting_description", message.platform)
             return MenuResponse(text="אנא כתוב/י את התיאור למסמך.")
 
-        if answer in _NO_KEYWORDS:
+        if answer == _NO_PAYLOAD:
             return self._send_upload_email(message, description=None)
 
-        return MenuResponse(
-            text="אנא ענה/י 1 (כן) או 2 (לא).",
-            buttons=_YES_NO_BUTTONS,
-        )
+        return MenuResponse(text=_TAP_BUTTON_REMINDER, buttons=_YES_NO_BUTTONS)
 
     def _handle_description(self, message: InternalMessage) -> MenuResponse:
         return self._send_upload_email(message, description=message.text)
@@ -224,18 +219,18 @@ class MenuHandler:
         )
 
     def _handle_session_decision(self, message: InternalMessage) -> MenuResponse:
+        if message.message_type != MessageType.BUTTON:
+            return MenuResponse(text=_TAP_BUTTON_REMINDER, buttons=_CLOSE_CONTINUE_BUTTONS)
+
         text = (message.text or "").strip()
 
-        if text in _CLOSE_KEYWORDS:
+        if text == _CLOSE_PAYLOAD:
             session_manager.set_state(message.chat_id, "idle", message.platform)
             return MenuResponse(
                 text="השיחה הסתיימה. בכל פעם שתזדקק/י לעזרה, פשוט שלח/י הודעה ונציג לך את התפריט :)"
             )
 
-        if text in _KEEP_KEYWORDS:
+        if text == _KEEP_PAYLOAD:
             return self._show_menu(message)
 
-        return MenuResponse(
-            text=f"אנא ענה/י 1 (לסגירה) או 2 (להמשך).\n\n{_SESSION_DECISION_TEXT}",
-            buttons=_CLOSE_CONTINUE_BUTTONS,
-        )
+        return MenuResponse(text=_TAP_BUTTON_REMINDER, buttons=_CLOSE_CONTINUE_BUTTONS)

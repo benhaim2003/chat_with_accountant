@@ -11,6 +11,7 @@ class Platform(str, Enum):
 
 class MessageType(str, Enum):
     TEXT = "text"
+    BUTTON = "button"
     DOCUMENT = "document"
     PHOTO = "photo"
 

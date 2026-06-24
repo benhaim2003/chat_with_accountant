@@ -105,7 +105,7 @@ class TelegramAdapter(PlatformAdapter):
         msg = InternalMessage(
             platform=Platform.TELEGRAM,
             chat_id=chat_id,
-            message_type=MessageType.TEXT,
+            message_type=MessageType.BUTTON,
             text=payload,
         )
         response = self._router.route(msg)

@@ -13,7 +13,9 @@ $ErrorActionPreference = "Stop"
 
 # --- Read .env -----------------------------------------------------------------
 $envVars = @{}
-Get-Content "$PSScriptRoot\.env" |
+# Read .env as UTF-8 explicitly. PowerShell 5.1's default is cp1252, which
+# corrupts Hebrew names in PILOT_CLIENTS_JSON when they get re-encoded.
+Get-Content "$PSScriptRoot\.env" -Encoding utf8 |
     Where-Object { $_ -notmatch '^\s*#' -and $_ -match '=' } |
     ForEach-Object {
         $parts = $_ -split '=', 2

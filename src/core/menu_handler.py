@@ -16,16 +16,48 @@ _MENU_TEXT = (
 
 _TAP_BUTTON_REMINDER = "תודה שפנית למוקד של רבינוביץ אבן ממן :)\nכיצד נוכל לעזור?"
 
+# Order matters (request first); payloads stay wired to the same flows in _route_option.
 _MENU_BUTTONS = (
-    MenuButton(label="שליחת מסמך", payload="1"),
-    MenuButton(label="בקשת מסמך",  payload="2"),
-    MenuButton(label="השארת הודעה", payload="3"),
+    MenuButton(label="📥 בקשת מסמך",  payload="2"),
+    MenuButton(label="📤 שליחת מסמך", payload="1"),
+    MenuButton(label="💬 השארת הודעה", payload="3"),
 )
 
 _YES_NO_BUTTONS = (
     MenuButton(label="כן", payload="1"),
     MenuButton(label="לא", payload="2"),
 )
+
+# Document types a client can request from the office (option 2 submenu).
+# Payload "6" (אחר) falls back to the free-text request flow.
+_REQUEST_TYPES = {
+    "1": "אישור ניכוי מס במקור וניהול ספרים",
+    "2": "דיווחים תקופתיים למע\"מ",
+    "3": "תלוש שכר",
+    "4": "אישור קיזוז מע\"מ על רכב",
+    "5": "שומת מס",
+}
+
+_REQUEST_OTHER_PAYLOAD = "6"
+
+_REQUEST_TYPE_BUTTONS = (
+    MenuButton(label="אישור ניכוי מס במקור", payload="1"),
+    MenuButton(label="דוח מע\"מ תקופתי",     payload="2"),
+    MenuButton(label="תלוש שכר",             payload="3"),
+    MenuButton(label="ניכוי מע\"מ על רכבים", payload="4"),
+    MenuButton(label="שומת מס",              payload="5"),
+    MenuButton(label="אחר",                  payload=_REQUEST_OTHER_PAYLOAD),
+)
+
+_REQUEST_TYPE_PROMPT = "איזה מסמך תרצה/י לקבל מהמשרד?"
+
+# Request types that need extra details from the client before the email is sent.
+# Keyed by the submenu payload; the prompt is asked in the awaiting_request_details state.
+_REQUEST_DETAIL_PROMPTS = {
+    "2": "לאיזו שנה תרצה/י את הדיווחים התקופתיים?",
+    "3": "אנא כתוב/י את שם העובד/ת ואת התקופה המבוקשת.",
+    "4": "אנא כתוב/י את חברת הרכב ואת מספר הרישוי שלו.",
+}
 
 _FOLLOWUP_BUTTONS_BY_KIND = {
     "upload":  (
@@ -60,6 +92,8 @@ _FOLLOWUP_CLOSE_PAYLOAD = "3"
 
 _STATE_HANDLERS = {
     "awaiting_option":                   "_route_option",
+    "awaiting_request_type":             "_handle_request_type",
+    "awaiting_request_details":          "_handle_request_details",
     "awaiting_file_upload":              "_handle_upload",
     "awaiting_description_choice":       "_handle_description_choice",
     "awaiting_description":              "_handle_description",
@@ -114,8 +148,8 @@ class MenuHandler:
 
     @staticmethod
     def _start_flow_request(message: InternalMessage) -> MenuResponse:
-        session_manager.set_state(message.chat_id, "awaiting_file_request", message.platform)
-        return MenuResponse(text="איזה מסמך היית רוצה לקבל מהמשרד?")
+        session_manager.set_state(message.chat_id, "awaiting_request_type", message.platform)
+        return MenuResponse(text=_REQUEST_TYPE_PROMPT, buttons=_REQUEST_TYPE_BUTTONS)
 
     @staticmethod
     def _start_flow_message(message: InternalMessage) -> MenuResponse:
@@ -185,12 +219,63 @@ class MenuHandler:
         )
 
 
+    def _handle_request_type(self, message: InternalMessage) -> MenuResponse:
+        if message.message_type != MessageType.BUTTON:
+            return MenuResponse(text=_TAP_BUTTON_REMINDER, buttons=_REQUEST_TYPE_BUTTONS)
+
+        choice = (message.text or "").strip()
+
+        if choice == _REQUEST_OTHER_PAYLOAD:
+            session_manager.set_state(message.chat_id, "awaiting_file_request", message.platform)
+            return MenuResponse(text="איזה מסמך היית רוצה לקבל מהמשרד?")
+
+        doc_type = _REQUEST_TYPES.get(choice)
+        if doc_type is None:
+            return MenuResponse(text=_TAP_BUTTON_REMINDER, buttons=_REQUEST_TYPE_BUTTONS)
+
+        detail_prompt = _REQUEST_DETAIL_PROMPTS.get(choice)
+        if detail_prompt:
+            session_manager.set_state(
+                message.chat_id, "awaiting_request_details", message.platform,
+                pending_request_type=doc_type,
+                pending_request_prompt=detail_prompt,
+            )
+            return MenuResponse(text=detail_prompt)
+
+        return self._send_request_email(
+            message,
+            subject_detail=f"בקשת מסמך — {doc_type}",
+            request_text=doc_type,
+        )
+
+    def _handle_request_details(self, message: InternalMessage) -> MenuResponse:
+        session = session_manager.get_session(message.chat_id, message.platform)
+        details = (message.text or "").strip()
+
+        if message.message_type != MessageType.TEXT or not details:
+            prompt = session.context.get("pending_request_prompt", _REQUEST_TYPE_PROMPT)
+            return MenuResponse(text=prompt)
+
+        doc_type = session.context.get("pending_request_type", "מסמך")
+        return self._send_request_email(
+            message,
+            subject_detail=f"בקשת מסמך — {doc_type}",
+            request_text=f"{doc_type}\nפרטים: {details}",
+        )
+
     def _handle_file_request(self, message: InternalMessage) -> MenuResponse:
+        return self._send_request_email(
+            message,
+            subject_detail="בקשת קובץ",
+            request_text=message.text or "",
+        )
+
+    def _send_request_email(self, message: InternalMessage, subject_detail: str, request_text: str) -> MenuResponse:
         label = client_label(message.chat_id)
-        subject = f"[CPA Bot] {label} · בקשת קובץ"
+        subject = f"[CPA Bot] {label} · {subject_detail}"
         body = (
-            f"{label} מבקש/ת קובץ.\n\n"
-            f"בקשה: {message.text}"
+            f"{label} מבקש/ת מסמך.\n\n"
+            f"בקשה: {request_text}"
         )
         thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id, platform=message.platform.value)
         session_manager.set_state(

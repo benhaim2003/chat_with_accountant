@@ -102,10 +102,12 @@ config.py                    # Root-level logging config
 | :--- | :--- |
 | `idle` | No active session — next message shows the menu |
 | `awaiting_option` | Menu shown, waiting for the user to tap one of the three buttons (payloads "1"/"2"/"3") |
+| `awaiting_request_type` | Option 2 submenu shown — 5 named document types + "אחר" (payloads "1"–"6") |
+| `awaiting_request_details` | Named request type needs extra details (year / worker+period / car+plate) before emailing |
 | `awaiting_file_upload` | Waiting for client to upload a document (option 1) |
 | `awaiting_description_choice` | File received, asking if client wants to add a description |
 | `awaiting_description` | Waiting for client to type the description text |
-| `awaiting_file_request` | Waiting for client to describe which file they need (option 2) |
+| `awaiting_file_request` | Waiting for client to describe which file they need (option 2 → "אחר") |
 | `awaiting_accountant_message` | Waiting for the client's message to the accountant (option 3) |
 | `awaiting_followup_decision` | A one-shot flow just completed; client prompted to send another, return to main menu, or close |
 
@@ -118,8 +120,12 @@ config.py                    # Root-level logging config
 4. Send email with file + optional description → set `awaiting_followup_decision`
 
 **Option 2 — Request a file:**
-1. Ask client to describe the file they need
-2. Send email with request → set `awaiting_followup_decision`
+1. Show document-type submenu: אישור ניכוי מס במקור / דוח מע"מ תקופתי / תלוש שכר / ניכוי מע"מ על רכבים / שומת מס / אחר
+2. Types needing details first (`awaiting_request_details`): דוח מע"מ תקופתי → year; תלוש שכר → worker name + period; ניכוי מע"מ על רכבים → car maker + plate number. Details are appended to the email body.
+3. Other named types (אישור ניכוי מס במקור, שומת מס) → send email immediately (subject includes the doc type) → set `awaiting_followup_decision`
+4. "אחר" tapped → ask client to describe the file they need (free text) → send email → set `awaiting_followup_decision`
+
+On WhatsApp, menus with more than 3 buttons render as an interactive **list message** (up to 10 rows) instead of reply buttons — see `send_response` in `whatsapp_adapter.py`.
 
 **Option 3 — Message to accountant:**
 1. Client sends a single message → send email → set `awaiting_followup_decision`

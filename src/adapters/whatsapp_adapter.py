@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 _WA_BASE = "https://graph.facebook.com/v19.0"
 _WA_BUTTON_LABEL_MAX = 20
 _WA_MAX_BUTTONS = 3
+_WA_LIST_ROW_TITLE_MAX = 24
+_WA_MAX_LIST_ROWS = 10
+_WA_LIST_OPEN_LABEL = "בחר/י אפשרות"  # label on the button that opens the list
 
 
 class WhatsAppAdapter(PlatformAdapter):
@@ -51,7 +54,30 @@ class WhatsAppAdapter(PlatformAdapter):
             self.send_text(chat_id, response.text)
             return
 
-        buttons = response.buttons[:_WA_MAX_BUTTONS]
+        # WhatsApp reply buttons max out at 3 — larger menus go out as an
+        # interactive list (up to 10 rows); _dispatch already handles list_reply.
+        if len(response.buttons) > _WA_MAX_BUTTONS:
+            payload = {
+                "type": "interactive",
+                "interactive": {
+                    "type": "list",
+                    "body": {"text": response.text},
+                    "action": {
+                        "button": _WA_LIST_OPEN_LABEL,
+                        "sections": [
+                            {
+                                "rows": [
+                                    {"id": b.payload, "title": b.label[:_WA_LIST_ROW_TITLE_MAX]}
+                                    for b in response.buttons[:_WA_MAX_LIST_ROWS]
+                                ]
+                            }
+                        ],
+                    },
+                },
+            }
+            self._post_message(chat_id, payload)
+            return
+
         payload = {
             "type": "interactive",
             "interactive": {
@@ -66,7 +92,7 @@ class WhatsAppAdapter(PlatformAdapter):
                                 "title": b.label[:_WA_BUTTON_LABEL_MAX],
                             },
                         }
-                        for b in buttons
+                        for b in response.buttons
                     ]
                 },
             },

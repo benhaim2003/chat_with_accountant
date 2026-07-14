@@ -1,348 +1,246 @@
 from __future__ import annotations
+
 import logging
+
+from src.core import session_manager, texts
 from src.models.internal_message import InternalMessage, MessageType
-from src.models.menu_response import MenuResponse, MenuButton
-from src.core import session_manager
+from src.models.menu_response import MenuResponse
 from src.repositories.pilot_clients import client_label
 from src.services.email_gateway import GraphEmailGateway
-from src.services.file_handler import FileHandler
 
 logger = logging.getLogger(__name__)
 
-_MENU_TEXT = (
-    "תודה שפנית למוקד של רבינוביץ אבן ממן :)\n\n"
-    "איך נוכל לעזור לך?"
-)
 
-_TAP_BUTTON_REMINDER = "תודה שפנית למוקד של רבינוביץ אבן ממן :)\nכיצד נוכל לעזור?"
+class State:
+    # Values are persisted in Redis sessions — renaming one breaks live conversations.
+    IDLE = "idle"
+    MAIN_MENU = "awaiting_option"
+    REQUEST_TYPE = "awaiting_request_type"
+    REQUEST_DETAILS = "awaiting_request_details"
+    FILE_UPLOAD = "awaiting_file_upload"
+    DESCRIPTION_CHOICE = "awaiting_description_choice"
+    DESCRIPTION = "awaiting_description"
+    FREE_TEXT_REQUEST = "awaiting_file_request"
+    ACCOUNTANT_MESSAGE = "awaiting_accountant_message"
+    FOLLOWUP = "awaiting_followup_decision"
 
-# Order matters (request first); payloads stay wired to the same flows in _route_option.
-_MENU_BUTTONS = (
-    MenuButton(label="📥 בקשת מסמך",  payload="2"),
-    MenuButton(label="📤 שליחת מסמך", payload="1"),
-    MenuButton(label="💬 השארת הודעה", payload="3"),
-)
 
-_YES_NO_BUTTONS = (
-    MenuButton(label="כן", payload="1"),
-    MenuButton(label="לא", payload="2"),
-)
-
-# Document types a client can request from the office (option 2 submenu).
-# Payload "6" (אחר) falls back to the free-text request flow.
-_REQUEST_TYPES = {
-    "1": "אישור ניכוי מס במקור וניהול ספרים",
-    "2": "דיווחים תקופתיים למע\"מ",
-    "3": "תלוש שכר",
-    "4": "אישור קיזוז מע\"מ על רכב",
-    "5": "שומת מס",
-}
-
-_REQUEST_OTHER_PAYLOAD = "6"
-
-_REQUEST_TYPE_BUTTONS = (
-    MenuButton(label="אישור ניכוי מס במקור", payload="1"),
-    MenuButton(label="דוח מע\"מ תקופתי",     payload="2"),
-    MenuButton(label="תלוש שכר",             payload="3"),
-    MenuButton(label="ניכוי מע\"מ על רכבים", payload="4"),
-    MenuButton(label="שומת מס",              payload="5"),
-    MenuButton(label="אחר",                  payload=_REQUEST_OTHER_PAYLOAD),
-)
-
-_REQUEST_TYPE_PROMPT = "איזה מסמך תרצה/י לקבל מהמשרד?"
-
-# Request types that need extra details from the client before the email is sent.
-# Keyed by the submenu payload; the prompt is asked in the awaiting_request_details state.
-_REQUEST_DETAIL_PROMPTS = {
-    "2": "לאיזו שנה תרצה/י את הדיווחים התקופתיים?",
-    "3": "אנא כתוב/י את שם העובד/ת ואת התקופה המבוקשת.",
-    "4": "אנא כתוב/י את חברת הרכב ואת מספר הרישוי שלו.",
-}
-
-_FOLLOWUP_BUTTONS_BY_KIND = {
-    "upload":  (
-        MenuButton(label="שלח/י עוד מסמך",  payload="1"),
-        MenuButton(label="תפריט ראשי",      payload="2"),
-        MenuButton(label="סיים שיחה",       payload="3"),
-    ),
-    "request": (
-        MenuButton(label="בקש/י מסמך נוסף", payload="1"),
-        MenuButton(label="תפריט ראשי",      payload="2"),
-        MenuButton(label="סיים שיחה",       payload="3"),
-    ),
-    "message": (
-        MenuButton(label="שלח/י הודעה נוספת", payload="1"),
-        MenuButton(label="תפריט ראשי",        payload="2"),
-        MenuButton(label="סיים שיחה",         payload="3"),
-    ),
-}
-
-_FOLLOWUP_PROMPT = "מה תרצה/י לעשות עכשיו?"
-
-_OPTION_A_PAYLOAD = "1"
-_OPTION_B_PAYLOAD = "2"
-_OPTION_C_PAYLOAD = "3"
-
-_YES_PAYLOAD = "1"
-_NO_PAYLOAD  = "2"
-
-_FOLLOWUP_AGAIN_PAYLOAD = "1"
-_FOLLOWUP_MENU_PAYLOAD  = "2"
-_FOLLOWUP_CLOSE_PAYLOAD = "3"
-
-_STATE_HANDLERS = {
-    "awaiting_option":                   "_route_option",
-    "awaiting_request_type":             "_handle_request_type",
-    "awaiting_request_details":          "_handle_request_details",
-    "awaiting_file_upload":              "_handle_upload",
-    "awaiting_description_choice":       "_handle_description_choice",
-    "awaiting_description":              "_handle_description",
-    "awaiting_file_request":             "_handle_file_request",
-    "awaiting_accountant_message":       "_handle_accountant_message",
-    "awaiting_followup_decision":        "_handle_followup_decision",
-}
+class FlowKind:
+    UPLOAD = "upload"
+    REQUEST = "request"
+    MESSAGE = "message"
 
 
 class MenuHandler:
-    def __init__(self, email_gateway: GraphEmailGateway, file_handler: FileHandler) -> None:
+    def __init__(self, email_gateway: GraphEmailGateway) -> None:
         self._email = email_gateway
-        self._files = file_handler
+        self._handlers = {
+            State.MAIN_MENU: self._handle_main_menu,
+            State.FILE_UPLOAD: self._handle_file_upload,
+            State.DESCRIPTION_CHOICE: self._handle_description_choice,
+            State.DESCRIPTION: self._handle_description,
+            State.REQUEST_TYPE: self._handle_request_type,
+            State.REQUEST_DETAILS: self._handle_request_details,
+            State.FREE_TEXT_REQUEST: self._handle_free_text_request,
+            State.ACCOUNTANT_MESSAGE: self._handle_accountant_message,
+            State.FOLLOWUP: self._handle_followup,
+        }
 
     def handle(self, message: InternalMessage) -> MenuResponse:
         session = session_manager.get_session(message.chat_id, message.platform)
 
-        if session.state == "idle" or message.text in ("/start", "/menu"):
-            return self._show_menu(message)
+        if session.state == State.IDLE or message.text in ("/start", "/menu"):
+            return self._show_main_menu(message)
 
-        handler_name = _STATE_HANDLERS.get(session.state)
-        if handler_name:
-            return getattr(self, handler_name)(message)
+        handler = self._handlers.get(session.state)
+        if handler is None:
+            logger.warning("Unknown state '%s' for %s — resetting", session.state, message.chat_id)
+            return self._show_main_menu(message)
+        return handler(message)
 
-        logger.warning("Unknown state '%s' for %s — resetting", session.state, message.chat_id)
-        return self._show_menu(message)
+    def handle_close(self, chat_id: str, platform) -> MenuResponse:
+        session_manager.clear_session(chat_id, platform)
+        return MenuResponse(text=texts.CONVERSATION_CLOSED)
 
     @staticmethod
-    def _show_menu(message: InternalMessage) -> MenuResponse:
-        session_manager.set_state(message.chat_id, "awaiting_option", message.platform)
-        return MenuResponse(text=_MENU_TEXT, buttons=_MENU_BUTTONS)
+    def _show_main_menu(message: InternalMessage) -> MenuResponse:
+        session_manager.set_state(message.chat_id, State.MAIN_MENU, message.platform)
+        return MenuResponse(text=texts.GREETING, buttons=texts.MAIN_MENU_BUTTONS)
 
-    def _route_option(self, message: InternalMessage) -> MenuResponse:
+    def _handle_main_menu(self, message: InternalMessage) -> MenuResponse:
         if message.message_type != MessageType.BUTTON:
-            return MenuResponse(text=_TAP_BUTTON_REMINDER, buttons=_MENU_BUTTONS)
+            return MenuResponse(text=texts.TAP_BUTTON_REMINDER, buttons=texts.MAIN_MENU_BUTTONS)
 
         choice = (message.text or "").strip()
-
-        if choice == _OPTION_A_PAYLOAD:
-            return self._start_flow_upload(message)
-        if choice == _OPTION_B_PAYLOAD:
-            return self._start_flow_request(message)
-        if choice == _OPTION_C_PAYLOAD:
-            return self._start_flow_message(message)
-
-        return MenuResponse(text=_TAP_BUTTON_REMINDER, buttons=_MENU_BUTTONS)
+        if choice == texts.OPTION_UPLOAD:
+            return self._start_upload(message)
+        if choice == texts.OPTION_REQUEST:
+            return self._start_request(message)
+        if choice == texts.OPTION_MESSAGE:
+            return self._start_message(message)
+        return MenuResponse(text=texts.TAP_BUTTON_REMINDER, buttons=texts.MAIN_MENU_BUTTONS)
 
     @staticmethod
-    def _start_flow_upload(message: InternalMessage) -> MenuResponse:
-        session_manager.set_state(message.chat_id, "awaiting_file_upload", message.platform)
-        return MenuResponse(text="אנא שלח/י את המסמך או החשבונית.")
+    def _start_upload(message: InternalMessage) -> MenuResponse:
+        session_manager.set_state(message.chat_id, State.FILE_UPLOAD, message.platform)
+        return MenuResponse(text=texts.UPLOAD_PROMPT)
 
-    @staticmethod
-    def _start_flow_request(message: InternalMessage) -> MenuResponse:
-        session_manager.set_state(message.chat_id, "awaiting_request_type", message.platform)
-        return MenuResponse(text=_REQUEST_TYPE_PROMPT, buttons=_REQUEST_TYPE_BUTTONS)
-
-    @staticmethod
-    def _start_flow_message(message: InternalMessage) -> MenuResponse:
-        session_manager.set_state(message.chat_id, "awaiting_accountant_message", message.platform)
-        return MenuResponse(text="אנא שלח/י את ההודעה שלך לרואה החשבון.")
-
-
-    def _handle_upload(self, message: InternalMessage) -> MenuResponse:
+    def _handle_file_upload(self, message: InternalMessage) -> MenuResponse:
         if message.message_type not in (MessageType.DOCUMENT, MessageType.PHOTO):
-            return MenuResponse(text="אנא שלח/י את הקובץ כמסמך או תמונה מצורפת.")
+            return MenuResponse(text=texts.UPLOAD_NOT_A_FILE)
 
         session_manager.set_state(
-            message.chat_id, "awaiting_description_choice", message.platform,
+            message.chat_id, State.DESCRIPTION_CHOICE, message.platform,
             pending_file_path=message.file_path,
             pending_file_name=message.file_name or "לא ידוע",
         )
-        return MenuResponse(
-            text="האם תרצה/י להוסיף תיאור למסמך?",
-            buttons=_YES_NO_BUTTONS,
-        )
+        return MenuResponse(text=texts.UPLOAD_ASK_DESCRIPTION, buttons=texts.YES_NO_BUTTONS)
 
     def _handle_description_choice(self, message: InternalMessage) -> MenuResponse:
         if message.message_type != MessageType.BUTTON:
-            return MenuResponse(text=_TAP_BUTTON_REMINDER, buttons=_YES_NO_BUTTONS)
+            return MenuResponse(text=texts.TAP_BUTTON_REMINDER, buttons=texts.YES_NO_BUTTONS)
 
         answer = (message.text or "").strip()
-
-        if answer == _YES_PAYLOAD:
-            session_manager.set_state(message.chat_id, "awaiting_description", message.platform)
-            return MenuResponse(text="אנא כתוב/י את התיאור למסמך.")
-
-        if answer == _NO_PAYLOAD:
-            return self._send_upload_email(message, description=None)
-
-        return MenuResponse(text=_TAP_BUTTON_REMINDER, buttons=_YES_NO_BUTTONS)
+        if answer == texts.YES:
+            session_manager.set_state(message.chat_id, State.DESCRIPTION, message.platform)
+            return MenuResponse(text=texts.UPLOAD_DESCRIPTION_PROMPT)
+        if answer == texts.NO:
+            return self._finish_upload(message, description=None)
+        return MenuResponse(text=texts.TAP_BUTTON_REMINDER, buttons=texts.YES_NO_BUTTONS)
 
     def _handle_description(self, message: InternalMessage) -> MenuResponse:
-        return self._send_upload_email(message, description=message.text)
+        return self._finish_upload(message, description=message.text)
 
-    def _send_upload_email(self, message: InternalMessage, description: str | None) -> MenuResponse:
+    def _finish_upload(self, message: InternalMessage, description: str | None) -> MenuResponse:
         session = session_manager.get_session(message.chat_id, message.platform)
-        file_path = session.context.get("pending_file_path")
-        file_name = session.context.get("pending_file_name", "לא ידוע")
-
-        label = client_label(message.chat_id)
-        subject = f"[CPA Bot] {label} · העלאת מסמך"
-        body = f"{label} העלה/תה מסמך.\nשם קובץ: {file_name}"
-        if description:
-            body += f"\n\nתיאור: {description}"
-
+        subject, body = texts.upload_email(
+            client=client_label(message.chat_id),
+            file_name=session.context.get("pending_file_name", "לא ידוע"),
+            description=description,
+        )
         thread_id = self._email.send(
             subject=subject,
             body=body,
-            attachment_path=file_path,
+            attachment_path=session.context.get("pending_file_path"),
             chat_id=message.chat_id,
             platform=message.platform.value,
         )
-        session_manager.set_state(
-            message.chat_id, "awaiting_followup_decision", message.platform,
-            active_thread_id=thread_id,
-            follow_up_subject=subject,
-            flow_kind="upload",
-        )
-        return MenuResponse(
-            text="תודה! המסמך שלך התקבל והועבר למשרד.\n\n" + _FOLLOWUP_PROMPT,
-            buttons=_FOLLOWUP_BUTTONS_BY_KIND["upload"],
-        )
+        return self._finish_flow(message, FlowKind.UPLOAD, texts.UPLOAD_DONE, subject, thread_id)
 
+    @staticmethod
+    def _start_request(message: InternalMessage) -> MenuResponse:
+        session_manager.set_state(message.chat_id, State.REQUEST_TYPE, message.platform)
+        return MenuResponse(text=texts.REQUEST_TYPE_PROMPT, buttons=texts.REQUEST_TYPE_BUTTONS)
 
     def _handle_request_type(self, message: InternalMessage) -> MenuResponse:
         if message.message_type != MessageType.BUTTON:
-            return MenuResponse(text=_TAP_BUTTON_REMINDER, buttons=_REQUEST_TYPE_BUTTONS)
+            return MenuResponse(text=texts.TAP_BUTTON_REMINDER, buttons=texts.REQUEST_TYPE_BUTTONS)
 
         choice = (message.text or "").strip()
 
-        if choice == _REQUEST_OTHER_PAYLOAD:
-            session_manager.set_state(message.chat_id, "awaiting_file_request", message.platform)
-            return MenuResponse(text="איזה מסמך היית רוצה לקבל מהמשרד?")
+        if choice == texts.REQUEST_OTHER:
+            session_manager.set_state(message.chat_id, State.FREE_TEXT_REQUEST, message.platform)
+            return MenuResponse(text=texts.REQUEST_FREE_TEXT_PROMPT)
 
-        doc_type = _REQUEST_TYPES.get(choice)
+        doc_type = texts.REQUEST_TYPES.get(choice)
         if doc_type is None:
-            return MenuResponse(text=_TAP_BUTTON_REMINDER, buttons=_REQUEST_TYPE_BUTTONS)
+            return MenuResponse(text=texts.TAP_BUTTON_REMINDER, buttons=texts.REQUEST_TYPE_BUTTONS)
 
-        detail_prompt = _REQUEST_DETAIL_PROMPTS.get(choice)
+        detail_prompt = texts.REQUEST_DETAIL_PROMPTS.get(choice)
         if detail_prompt:
             session_manager.set_state(
-                message.chat_id, "awaiting_request_details", message.platform,
+                message.chat_id, State.REQUEST_DETAILS, message.platform,
                 pending_request_type=doc_type,
                 pending_request_prompt=detail_prompt,
             )
             return MenuResponse(text=detail_prompt)
 
-        return self._send_request_email(
-            message,
-            subject_detail=f"בקשת מסמך — {doc_type}",
-            request_text=doc_type,
-        )
+        return self._finish_request(message, f"בקשת מסמך — {doc_type}", doc_type)
 
     def _handle_request_details(self, message: InternalMessage) -> MenuResponse:
         session = session_manager.get_session(message.chat_id, message.platform)
         details = (message.text or "").strip()
 
         if message.message_type != MessageType.TEXT or not details:
-            prompt = session.context.get("pending_request_prompt", _REQUEST_TYPE_PROMPT)
+            prompt = session.context.get("pending_request_prompt", texts.REQUEST_TYPE_PROMPT)
             return MenuResponse(text=prompt)
 
         doc_type = session.context.get("pending_request_type", "מסמך")
-        return self._send_request_email(
-            message,
-            subject_detail=f"בקשת מסמך — {doc_type}",
-            request_text=f"{doc_type}\nפרטים: {details}",
+        return self._finish_request(
+            message, f"בקשת מסמך — {doc_type}", f"{doc_type}\nפרטים: {details}"
         )
 
-    def _handle_file_request(self, message: InternalMessage) -> MenuResponse:
-        return self._send_request_email(
-            message,
-            subject_detail="בקשת קובץ",
-            request_text=message.text or "",
-        )
+    def _handle_free_text_request(self, message: InternalMessage) -> MenuResponse:
+        return self._finish_request(message, "בקשת קובץ", message.text or "")
 
-    def _send_request_email(self, message: InternalMessage, subject_detail: str, request_text: str) -> MenuResponse:
-        label = client_label(message.chat_id)
-        subject = f"[CPA Bot] {label} · {subject_detail}"
-        body = (
-            f"{label} מבקש/ת מסמך.\n\n"
-            f"בקשה: {request_text}"
-        )
-        thread_id = self._email.send(subject=subject, body=body, chat_id=message.chat_id, platform=message.platform.value)
-        session_manager.set_state(
-            message.chat_id, "awaiting_followup_decision", message.platform,
-            active_thread_id=thread_id,
-            follow_up_subject=subject,
-            flow_kind="request",
-        )
-        return MenuResponse(
-            text="בקשתך הועברה למשרד.\n\n" + _FOLLOWUP_PROMPT,
-            buttons=_FOLLOWUP_BUTTONS_BY_KIND["request"],
-        )
-
-
-    def _handle_accountant_message(self, message: InternalMessage) -> MenuResponse:
-        label = client_label(message.chat_id)
-        subject = f"[CPA Bot] {label} · הודעה לרו״ח"
-        body = f"{label} השאיר/ה הודעה:\n\n{message.text or ''}"
+    def _finish_request(self, message: InternalMessage, subject_detail: str, request_text: str) -> MenuResponse:
+        subject, body = texts.request_email(client_label(message.chat_id), subject_detail, request_text)
         thread_id = self._email.send(
             subject=subject,
             body=body,
             chat_id=message.chat_id,
             platform=message.platform.value,
         )
+        return self._finish_flow(message, FlowKind.REQUEST, texts.REQUEST_DONE, subject, thread_id)
+
+    @staticmethod
+    def _start_message(message: InternalMessage) -> MenuResponse:
+        session_manager.set_state(message.chat_id, State.ACCOUNTANT_MESSAGE, message.platform)
+        return MenuResponse(text=texts.MESSAGE_PROMPT)
+
+    def _handle_accountant_message(self, message: InternalMessage) -> MenuResponse:
+        subject, body = texts.accountant_message_email(client_label(message.chat_id), message.text or "")
+        thread_id = self._email.send(
+            subject=subject,
+            body=body,
+            chat_id=message.chat_id,
+            platform=message.platform.value,
+        )
+        return self._finish_flow(message, FlowKind.MESSAGE, texts.MESSAGE_DONE, subject, thread_id)
+
+    def _finish_flow(
+        self,
+        message: InternalMessage,
+        flow_kind: str,
+        confirmation: str,
+        subject: str,
+        thread_id: str | None,
+    ) -> MenuResponse:
         session_manager.set_state(
-            message.chat_id, "awaiting_followup_decision", message.platform,
+            message.chat_id, State.FOLLOWUP, message.platform,
             active_thread_id=thread_id,
             follow_up_subject=subject,
-            flow_kind="message",
+            flow_kind=flow_kind,
         )
         return MenuResponse(
-            text="ההודעה שלך נשלחה לרואה החשבון.\n\n" + _FOLLOWUP_PROMPT,
-            buttons=_FOLLOWUP_BUTTONS_BY_KIND["message"],
+            text=confirmation + "\n\n" + texts.FOLLOWUP_PROMPT,
+            buttons=texts.FOLLOWUP_BUTTONS[flow_kind],
         )
 
-    def handle_close(self, chat_id: str, platform) -> MenuResponse:
-        session_manager.clear_session(chat_id, platform)
-        return MenuResponse(
-            text="השיחה הסתיימה. בכל פעם שתזדקק/י לעזרה, פשוט שלח/י הודעה ונציג לך את התפריט."
-        )
-
-    def _handle_followup_decision(self, message: InternalMessage) -> MenuResponse:
+    def _handle_followup(self, message: InternalMessage) -> MenuResponse:
         session = session_manager.get_session(message.chat_id, message.platform)
-        flow_kind = session.context.get("flow_kind", "upload")
-        buttons = _FOLLOWUP_BUTTONS_BY_KIND.get(flow_kind, _FOLLOWUP_BUTTONS_BY_KIND["upload"])
+        flow_kind = session.context.get("flow_kind", FlowKind.UPLOAD)
+        buttons = texts.FOLLOWUP_BUTTONS.get(flow_kind, texts.FOLLOWUP_BUTTONS[FlowKind.UPLOAD])
 
         if message.message_type != MessageType.BUTTON:
-            return MenuResponse(text=_TAP_BUTTON_REMINDER, buttons=buttons)
+            return MenuResponse(text=texts.TAP_BUTTON_REMINDER, buttons=buttons)
 
         choice = (message.text or "").strip()
 
-        if choice == _FOLLOWUP_AGAIN_PAYLOAD:
-            if flow_kind == "upload":
-                return self._start_flow_upload(message)
-            if flow_kind == "request":
-                return self._start_flow_request(message)
-            if flow_kind == "message":
-                return self._start_flow_message(message)
-            return self._show_menu(message)
+        if choice == texts.FOLLOWUP_AGAIN:
+            starters = {
+                FlowKind.UPLOAD: self._start_upload,
+                FlowKind.REQUEST: self._start_request,
+                FlowKind.MESSAGE: self._start_message,
+            }
+            starter = starters.get(flow_kind, self._show_main_menu)
+            return starter(message)
 
-        if choice == _FOLLOWUP_MENU_PAYLOAD:
-            return self._show_menu(message)
+        if choice == texts.FOLLOWUP_MENU:
+            return self._show_main_menu(message)
 
-        if choice == _FOLLOWUP_CLOSE_PAYLOAD:
-            session_manager.set_state(message.chat_id, "idle", message.platform)
-            return MenuResponse(
-                text="השיחה הסתיימה. בכל פעם שתזדקק/י לעזרה, פשוט שלח/י הודעה ונציג לך את התפריט :)"
-            )
+        if choice == texts.FOLLOWUP_CLOSE:
+            session_manager.set_state(message.chat_id, State.IDLE, message.platform)
+            return MenuResponse(text=texts.CONVERSATION_CLOSED_SMILEY)
 
-        return MenuResponse(text=_TAP_BUTTON_REMINDER, buttons=buttons)
+        return MenuResponse(text=texts.TAP_BUTTON_REMINDER, buttons=buttons)

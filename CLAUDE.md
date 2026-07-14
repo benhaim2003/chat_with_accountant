@@ -74,7 +74,8 @@ src/
     telegram_adapter.py      # Telegram bot; inline keyboards + CallbackQueryHandler for button taps
     whatsapp_adapter.py      # WhatsApp Cloud API; FastAPI webhook + interactive buttons (live)
   core/
-    menu_handler.py          # FSM: routes messages through 7 states; returns MenuResponse
+    menu_handler.py          # FSM: State/FlowKind constants + one handler method per state
+    texts.py                 # ALL Hebrew copy: prompts, button sets, payloads, email templates
     message_router.py        # Dispatches InternalMessage to MenuHandler; handle_close()
     session_manager.py       # Redis-backed session store (key: session:{platform}:{chat_id})
   infrastructure/
@@ -82,20 +83,22 @@ src/
   models/
     internal_message.py      # InternalMessage + Platform/MessageType enums (TEXT, BUTTON, DOCUMENT, PHOTO)
     menu_response.py         # MenuResponse(text, buttons=(MenuButton(label, payload), …))
-    user_model.py            # UserSession dataclass (persisted to Redis as JSON)
+    session.py               # UserSession dataclass (persisted to Redis as JSON)
     client.py                # Client + Contact dataclasses
   repositories/
     client_repository.py     # Loads clients from data/clients.json (MVP: replace with DB)
     pilot_clients.py         # Pilot-phase chat_id → display-name dict (used in email subjects)
   services/
     email_gateway.py         # GraphEmailGateway — send/poll via Microsoft Graph
-    file_handler.py          # Saves incoming files to /tmp/cpa_bot_uploads/
-  main.py                    # Wires everything together; on_secretary_reply callback
+    file_handler.py          # UPLOAD_DIR + FileHandler; saves incoming files to /tmp/cpa_bot_uploads/
+  settings.py                # Settings.from_env() dataclass + configure_logging()
+  main.py                    # Wiring only: settings → gateway → router → adapters dict
 Dockerfile                   # python:3.12-slim; CMD ["python", "-m", "src.main"]
 .dockerignore
 deploy.ps1                   # Azure Container Apps deploy (commit-hash image tag; opt-in WhatsApp + ingress)
-config.py                    # Root-level logging config
 ```
+
+Conventions: client-facing copy and email templates go in `src/core/texts.py`, never inline in handlers. FSM state names live in `menu_handler.State` (values are the strings persisted in Redis — don't change them casually, live sessions reference them).
 
 ### Session State Machine
 | State | Meaning |
@@ -152,7 +155,7 @@ On WhatsApp, menus with more than 3 buttons render as an interactive **list mess
 4. `on_secretary_reply` callback in `main.py` forwards text + attachments to the client. No close-marker plumbing — closing the conversation is the client's responsibility (via the close button or `/close`).
 
 ### Email Body Stripping
-`GraphEmailGateway._extract_body` strips:
+`GraphEmailGateway._strip_quoted_text` strips:
 - Quoted text starting with `On ... wrote:` (English clients)
 - Hebrew quoted text starting with `בתאריך` (pattern: `(?:^|\n)[‎‏‪-‮‫⁦-⁩]*בתאריך\s`)
 - Lines starting with `>` as fallback

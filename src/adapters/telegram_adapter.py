@@ -41,8 +41,6 @@ class TelegramAdapter(PlatformAdapter):
         self._app.add_handler(MessageHandler(filters.Document.ALL, self._on_document))
         self._app.add_handler(MessageHandler(filters.PHOTO, self._on_photo))
 
-    # ---------------------------------------------------------------- public
-
     def send_text(self, chat_id: str, text: str) -> None:
         future = asyncio.run_coroutine_threadsafe(
             self._app.bot.send_message(chat_id=int(chat_id), text=text),
@@ -81,8 +79,6 @@ class TelegramAdapter(PlatformAdapter):
                 logger.warning("Conflict: previous instance still running. Retrying in %ds (attempt %d/%d)...", wait,
                                attempt, max_retries)
                 time.sleep(wait)
-
-    # --------------------------------------------------------------- handlers
 
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msg = self._make_text_message(update, "/start")
@@ -125,7 +121,7 @@ class TelegramAdapter(PlatformAdapter):
         await self._reply(update, self._router.route(msg))
 
     async def _on_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        photo = update.message.photo[-1]  # largest available size
+        photo = update.message.photo[-1]  # Telegram sends multiple sizes; last is largest
         tg_file = await photo.get_file()
         data = bytes(await tg_file.download_as_bytearray())
         filename = f"{photo.file_id}.jpg"
@@ -134,8 +130,6 @@ class TelegramAdapter(PlatformAdapter):
             update, MessageType.PHOTO, file_path=local_path, file_name=filename
         )
         await self._reply(update, self._router.route(msg))
-
-    # --------------------------------------------------------------- helpers
 
     async def _reply(self, update: Update, response: MenuResponse) -> None:
         markup = self._build_markup(response)

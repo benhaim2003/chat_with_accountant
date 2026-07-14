@@ -23,7 +23,7 @@ _WA_BUTTON_LABEL_MAX = 20
 _WA_MAX_BUTTONS = 3
 _WA_LIST_ROW_TITLE_MAX = 24
 _WA_MAX_LIST_ROWS = 10
-_WA_LIST_OPEN_LABEL = "בחר/י אפשרות"  # label on the button that opens the list
+_WA_LIST_OPEN_LABEL = "בחר/י אפשרות"
 
 
 class WhatsAppAdapter(PlatformAdapter):
@@ -44,8 +44,6 @@ class WhatsAppAdapter(PlatformAdapter):
         self._port = port
         self._fastapi_app = self._build_app()
 
-    # ---------------------------------------------------------------- public
-
     def send_text(self, chat_id: str, text: str) -> None:
         self._post_message(chat_id, {"type": "text", "text": {"body": text}})
 
@@ -54,8 +52,6 @@ class WhatsAppAdapter(PlatformAdapter):
             self.send_text(chat_id, response.text)
             return
 
-        # WhatsApp reply buttons max out at 3 — larger menus go out as an
-        # interactive list (up to 10 rows); _dispatch already handles list_reply.
         if len(response.buttons) > _WA_MAX_BUTTONS:
             payload = {
                 "type": "interactive",
@@ -116,11 +112,9 @@ class WhatsAppAdapter(PlatformAdapter):
         t.start()
         logger.info("WhatsApp webhook server started on port %d", self._port)
 
-    # ---------------------------------------------------------------- FastAPI
-
     def _build_app(self) -> FastAPI:
         app = FastAPI()
-        adapter = self  # capture for closures
+        adapter = self
 
         @app.get("/webhook/whatsapp")
         async def verify(request: Request):
@@ -142,8 +136,6 @@ class WhatsAppAdapter(PlatformAdapter):
             return {"status": "ok"}
 
         return app
-
-    # ---------------------------------------------------------------- webhook dispatch
 
     def _handle_payload(self, data: dict) -> None:
         for entry in data.get("entry", []):
@@ -205,8 +197,6 @@ class WhatsAppAdapter(PlatformAdapter):
 
         response = self._router.route(internal)
         self.send_response(chat_id, response)
-
-    # ---------------------------------------------------------------- Graph API helpers
 
     def _post_message(self, chat_id: str, payload: dict) -> None:
         r = requests.post(

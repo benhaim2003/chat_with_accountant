@@ -8,13 +8,7 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# Pilot phase: chat_id → display-name map. Personal data — never committed.
-# Populated from one of two env vars:
-#   PILOT_CLIENTS_JSON_B64  — base64-encoded JSON, used in production so the
-#                             Container Apps YAML stays ASCII-only (the Windows
-#                             Azure CLI can't read non-ASCII YAML files).
-#   PILOT_CLIENTS_JSON      — raw single-line JSON, for local dev via .env.
-# If neither is set, all clients surface as "לקוח לא מזוהה (<chat_id>)".
+# Loaded from env, never from source — client names are personal data and this repo is public.
 def _load() -> dict[str, str]:
     b64 = (os.environ.get("PILOT_CLIENTS_JSON_B64") or "").strip()
     if b64:

@@ -124,8 +124,8 @@ Conventions: client-facing copy and email templates go in `src/core/texts.py`, n
 
 **Option 2 — Request a file:**
 1. Show document-type submenu: אישור ניכוי מס במקור / דוח מע"מ תקופתי / תלוש שכר / ניכוי מע"מ על רכבים / שומת מס / אחר
-2. Types needing details first (`awaiting_request_details`): דוח מע"מ תקופתי → year; תלוש שכר → worker name + period; ניכוי מע"מ על רכבים → car maker + plate number. Details are appended to the email body.
-3. Other named types (אישור ניכוי מס במקור, שומת מס) → send email immediately (subject includes the doc type) → set `awaiting_followup_decision`
+2. Types needing details first (`awaiting_request_details`): דוח מע"מ תקופתי → year; תלוש שכר → worker name + period; ניכוי מע"מ על רכבים → car maker + plate number; שומת מס → year. Details are appended to the email body.
+3. Other named types (אישור ניכוי מס במקור) → send email immediately (subject includes the doc type) → set `awaiting_followup_decision`
 4. "אחר" tapped → ask client to describe the file they need (free text) → send email → set `awaiting_followup_decision`
 
 On WhatsApp, menus with more than 3 buttons render as an interactive **list message** (up to 10 rows) instead of reply buttons — see `send_response` in `whatsapp_adapter.py`.

@@ -52,6 +52,9 @@ class MenuHandler:
         if session.state == State.IDLE or message.text in ("/start", "/menu"):
             return self._show_main_menu(message)
 
+        if message.message_type == MessageType.BUTTON and message.text == texts.CANCEL:
+            return self._cancel(message)
+
         handler = self._handlers.get(session.state)
         if handler is None:
             logger.warning("Unknown state '%s' for %s — resetting", session.state, message.chat_id)
@@ -61,6 +64,11 @@ class MenuHandler:
     def handle_close(self, chat_id: str, platform) -> MenuResponse:
         session_manager.clear_session(chat_id, platform)
         return MenuResponse(text=texts.CONVERSATION_CLOSED)
+
+    def _cancel(self, message: InternalMessage) -> MenuResponse:
+        session_manager.clear_session(message.chat_id, message.platform)
+        session_manager.set_state(message.chat_id, State.MAIN_MENU, message.platform)
+        return MenuResponse(text=texts.CANCELLED, buttons=texts.MAIN_MENU_BUTTONS)
 
     @staticmethod
     def _show_main_menu(message: InternalMessage) -> MenuResponse:
@@ -83,30 +91,30 @@ class MenuHandler:
     @staticmethod
     def _start_upload(message: InternalMessage) -> MenuResponse:
         session_manager.set_state(message.chat_id, State.FILE_UPLOAD, message.platform)
-        return MenuResponse(text=texts.UPLOAD_PROMPT)
+        return MenuResponse(text=texts.UPLOAD_PROMPT, buttons=texts.with_cancel())
 
     def _handle_file_upload(self, message: InternalMessage) -> MenuResponse:
         if message.message_type not in (MessageType.DOCUMENT, MessageType.PHOTO):
-            return MenuResponse(text=texts.UPLOAD_NOT_A_FILE)
+            return MenuResponse(text=texts.UPLOAD_NOT_A_FILE, buttons=texts.with_cancel())
 
         session_manager.set_state(
             message.chat_id, State.DESCRIPTION_CHOICE, message.platform,
             pending_file_path=message.file_path,
             pending_file_name=message.file_name or "לא ידוע",
         )
-        return MenuResponse(text=texts.UPLOAD_ASK_DESCRIPTION, buttons=texts.YES_NO_BUTTONS)
+        return MenuResponse(text=texts.UPLOAD_ASK_DESCRIPTION, buttons=texts.with_cancel(*texts.YES_NO_BUTTONS))
 
     def _handle_description_choice(self, message: InternalMessage) -> MenuResponse:
         if message.message_type != MessageType.BUTTON:
-            return MenuResponse(text=texts.TAP_BUTTON_REMINDER, buttons=texts.YES_NO_BUTTONS)
+            return MenuResponse(text=texts.TAP_BUTTON_REMINDER, buttons=texts.with_cancel(*texts.YES_NO_BUTTONS))
 
         answer = (message.text or "").strip()
         if answer == texts.YES:
             session_manager.set_state(message.chat_id, State.DESCRIPTION, message.platform)
-            return MenuResponse(text=texts.UPLOAD_DESCRIPTION_PROMPT)
+            return MenuResponse(text=texts.UPLOAD_DESCRIPTION_PROMPT, buttons=texts.with_cancel())
         if answer == texts.NO:
             return self._finish_upload(message, description=None)
-        return MenuResponse(text=texts.TAP_BUTTON_REMINDER, buttons=texts.YES_NO_BUTTONS)
+        return MenuResponse(text=texts.TAP_BUTTON_REMINDER, buttons=texts.with_cancel(*texts.YES_NO_BUTTONS))
 
     def _handle_description(self, message: InternalMessage) -> MenuResponse:
         return self._finish_upload(message, description=message.text)
@@ -130,21 +138,21 @@ class MenuHandler:
     @staticmethod
     def _start_request(message: InternalMessage) -> MenuResponse:
         session_manager.set_state(message.chat_id, State.REQUEST_TYPE, message.platform)
-        return MenuResponse(text=texts.REQUEST_TYPE_PROMPT, buttons=texts.REQUEST_TYPE_BUTTONS)
+        return MenuResponse(text=texts.REQUEST_TYPE_PROMPT, buttons=texts.with_cancel(*texts.REQUEST_TYPE_BUTTONS))
 
     def _handle_request_type(self, message: InternalMessage) -> MenuResponse:
         if message.message_type != MessageType.BUTTON:
-            return MenuResponse(text=texts.TAP_BUTTON_REMINDER, buttons=texts.REQUEST_TYPE_BUTTONS)
+            return MenuResponse(text=texts.TAP_BUTTON_REMINDER, buttons=texts.with_cancel(*texts.REQUEST_TYPE_BUTTONS))
 
         choice = (message.text or "").strip()
 
         if choice == texts.REQUEST_OTHER:
             session_manager.set_state(message.chat_id, State.FREE_TEXT_REQUEST, message.platform)
-            return MenuResponse(text=texts.REQUEST_FREE_TEXT_PROMPT)
+            return MenuResponse(text=texts.REQUEST_FREE_TEXT_PROMPT, buttons=texts.with_cancel())
 
         doc_type = texts.REQUEST_TYPES.get(choice)
         if doc_type is None:
-            return MenuResponse(text=texts.TAP_BUTTON_REMINDER, buttons=texts.REQUEST_TYPE_BUTTONS)
+            return MenuResponse(text=texts.TAP_BUTTON_REMINDER, buttons=texts.with_cancel(*texts.REQUEST_TYPE_BUTTONS))
 
         detail_prompt = texts.REQUEST_DETAIL_PROMPTS.get(choice)
         if detail_prompt:
@@ -153,7 +161,7 @@ class MenuHandler:
                 pending_request_type=doc_type,
                 pending_request_prompt=detail_prompt,
             )
-            return MenuResponse(text=detail_prompt)
+            return MenuResponse(text=detail_prompt, buttons=texts.with_cancel())
 
         return self._finish_request(message, f"בקשת מסמך — {doc_type}", doc_type)
 
@@ -163,7 +171,7 @@ class MenuHandler:
 
         if message.message_type != MessageType.TEXT or not details:
             prompt = session.context.get("pending_request_prompt", texts.REQUEST_TYPE_PROMPT)
-            return MenuResponse(text=prompt)
+            return MenuResponse(text=prompt, buttons=texts.with_cancel())
 
         doc_type = session.context.get("pending_request_type", "מסמך")
         return self._finish_request(
@@ -186,7 +194,7 @@ class MenuHandler:
     @staticmethod
     def _start_message(message: InternalMessage) -> MenuResponse:
         session_manager.set_state(message.chat_id, State.ACCOUNTANT_MESSAGE, message.platform)
-        return MenuResponse(text=texts.MESSAGE_PROMPT)
+        return MenuResponse(text=texts.MESSAGE_PROMPT, buttons=texts.with_cancel())
 
     def _handle_accountant_message(self, message: InternalMessage) -> MenuResponse:
         subject, body = texts.accountant_message_email(client_label(message.chat_id), message.text or "")

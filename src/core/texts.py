@@ -14,6 +14,14 @@ CONVERSATION_CLOSED = (
 )
 CONVERSATION_CLOSED_SMILEY = CONVERSATION_CLOSED[:-1] + " :)"
 
+CANCEL = "cancel"
+CANCELLED = "הפעולה בוטלה. איך נוכל לעזור?"
+CANCEL_BUTTON = MenuButton(label="❌ ביטול", payload=CANCEL)
+
+
+def with_cancel(*buttons: MenuButton) -> tuple[MenuButton, ...]:
+    return (*buttons, CANCEL_BUTTON)
+
 OPTION_UPLOAD = "1"
 OPTION_REQUEST = "2"
 OPTION_MESSAGE = "3"

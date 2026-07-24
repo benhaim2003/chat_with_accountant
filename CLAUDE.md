@@ -133,6 +133,8 @@ On WhatsApp, menus with more than 3 buttons render as an interactive **list mess
 **Option 3 — Message to accountant:**
 1. Client sends a single message → send email → set `awaiting_followup_decision`
 
+**Global cancel (❌ ביטול):** every in-flow prompt (all states except the main menu and follow-up) carries a cancel button. `MenuHandler.handle` intercepts a button with payload `texts.CANCEL` before state dispatch → `_cancel` clears the session (dropping any pending file / request details) and returns to the main menu. This is the only in-flow escape available to WhatsApp clients, since `/close` is Telegram-only.
+
 **Follow-up after each completed flow:** three contextual buttons — "send another" (re-enters the same flow's input state), "main menu", "close".
 
 **Secretary reply:**
